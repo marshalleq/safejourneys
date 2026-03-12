@@ -374,6 +374,55 @@ body.light-mode .leaflet-popup-tip { background: #fff !important; }
 body.light-mode .tt-label { color: #666; }
 body.light-mode .tt-divider { border-top-color: #ddd; }
 
+/* About modal */
+.about-btn {
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+    color: #ccc; font-size: 11px; padding: 4px 12px; border-radius: 12px;
+    cursor: pointer; transition: background 0.2s;
+    float: right; margin-top: -22px;
+}
+.about-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+body.light-mode .about-btn {
+    background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.15); color: #666;
+}
+body.light-mode .about-btn:hover { background: rgba(0,0,0,0.12); color: #333; }
+
+.about-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7); z-index: 10000;
+    justify-content: center; align-items: center;
+}
+.about-overlay.active { display: flex; }
+.about-modal {
+    background: #1a1a2e; color: #ddd; border-radius: 12px;
+    max-width: 700px; width: 90vw; max-height: 85vh; overflow-y: auto;
+    padding: 32px; position: relative;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+body.light-mode .about-modal { background: #fff; color: #333; box-shadow: 0 8px 40px rgba(0,0,0,0.2); }
+.about-modal h2 { font-size: 20px; color: #fff; margin-bottom: 16px; }
+body.light-mode .about-modal h2 { color: #222; }
+.about-modal h3 { font-size: 14px; color: #e74c3c; margin: 18px 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+.about-modal p, .about-modal li { font-size: 13px; line-height: 1.6; margin-bottom: 8px; }
+.about-modal ul { padding-left: 20px; }
+.about-modal a { color: #3498db; }
+.about-modal .about-close {
+    position: absolute; top: 12px; right: 16px;
+    background: none; border: none; color: #888; font-size: 22px;
+    cursor: pointer; line-height: 1;
+}
+.about-modal .about-close:hover { color: #fff; }
+body.light-mode .about-modal .about-close:hover { color: #333; }
+.about-modal table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 12px; }
+.about-modal th { text-align: left; color: #888; font-weight: 600; padding: 4px 8px; border-bottom: 1px solid #333; }
+.about-modal td { padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+body.light-mode .about-modal th { border-bottom-color: #ddd; }
+body.light-mode .about-modal td { border-bottom-color: #eee; }
+.about-modal .data-source {
+    background: rgba(52,152,219,0.1); border-left: 3px solid #3498db;
+    padding: 10px 14px; border-radius: 4px; margin: 12px 0;
+}
+
 </style>
 </head>
 <body>
@@ -382,6 +431,7 @@ body.light-mode .tt-divider { border-top-color: #ddd; }
     <div class="sidebar-header">
         <h1>Safe Journeys</h1>
         <p>Interactive Risk Explorer v2 — Severity + Frequency Model</p>
+        <button class="about-btn" onclick="document.getElementById('about-overlay').classList.add('active')">About this site</button>
     </div>
 
     <div class="controls">
@@ -670,10 +720,11 @@ function toggleTheme() {
     }
 }
 
-// Close popups on Escape key
+// Close popups and modals on Escape key
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         map.closePopup();
+        document.getElementById('about-overlay').classList.remove('active');
     }
 });
 
@@ -1311,5 +1362,86 @@ setInterval(() => {
     document.getElementById(id).addEventListener('change', onControlChange);
 });
 </script>
+
+<!-- About modal -->
+<div class="about-overlay" id="about-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+<div class="about-modal">
+    <button class="about-close" onclick="document.getElementById('about-overlay').classList.remove('active')">&times;</button>
+
+    <h2>About Safe Journeys</h2>
+    <p>Safe Journeys is an interactive crash risk explorer for New Zealand roads. It predicts where crashes are most likely to occur and how severe they may be, using machine learning applied to real crash data.</p>
+
+    <h3>Data Source</h3>
+    <div class="data-source">
+        <strong>All crash data comes from NZTA / Waka Kotahi's Crash Analysis System (CAS)</strong> — the official, publicly available record of all police-reported traffic crashes in New Zealand. This is the same dataset used by councils, road safety researchers, and government agencies.
+    </div>
+    <table>
+        <tr><th>Metric</th><th>Value</th></tr>
+        <tr><td>Total crash records</td><td><strong>910,823</strong></td></tr>
+        <tr><td>Time period</td><td>2000 &ndash; 2025</td></tr>
+        <tr><td>Average crashes per year</td><td>~33,700</td></tr>
+        <tr><td>Total people killed</td><td>9,371</td></tr>
+        <tr><td>Total seriously injured</td><td>63,316</td></tr>
+        <tr><td>DSI (Death or Serious Injury) crashes</td><td>60,627 (6.7%)</td></tr>
+    </table>
+    <p>New crash data is automatically pulled from the CAS API every 4 hours.</p>
+
+    <h3>How Predictions Are Calculated</h3>
+    <p>The system uses <strong>two separate models</strong> that answer different questions, then combines them:</p>
+
+    <p><strong>1. Severity Model &mdash; "If a crash happens here, how bad will it be?"</strong></p>
+    <p>A LightGBM gradient-boosted decision tree trained on 789,270 historical crashes (2000&ndash;2021) with 80 features covering road attributes, weather, light, vehicle types, impact objects, and location history. It predicts the probability of Death or Serious Injury (DSI) for each location. Test accuracy: <strong>AUC 0.82</strong> on unseen 2024&ndash;2025 data.</p>
+
+    <p><strong>2. Frequency Model &mdash; "How often do crashes happen here?"</strong></p>
+    <p>A statistical Poisson rate model that counts historical crashes per H3 hexagonal cell (~600m across) and computes an hourly crash rate. This is adjusted in real time based on current conditions:</p>
+    <ul>
+        <li><strong>Weather</strong> &mdash; live data from Open-Meteo (rain intensity, temperature, wind, visibility)</li>
+        <li><strong>Light</strong> &mdash; calculated from the sun's position at the current time</li>
+        <li><strong>Holidays</strong> &mdash; NZ public holiday periods have historically elevated crash rates</li>
+    </ul>
+
+    <p><strong>3. Combined &mdash; ETNA (Expected Time to Next Accident)</strong></p>
+    <p>The frequency rate, adjusted for current conditions, gives the expected time between crashes at each location. This is a statistical average, not a countdown &mdash; a cell showing "6 months" means crashes occur there roughly every 6 months on average.</p>
+
+    <h3>What the Map Shows</h3>
+    <table>
+        <tr><th>Element</th><th>Meaning</th></tr>
+        <tr><td><strong>Coloured hexagons</strong></td><td>Severity risk &mdash; green (low DSI probability) to red (high)</td></tr>
+        <tr><td><strong>Pulsing red markers</strong></td><td>Frequency hotspots &mdash; locations with the shortest expected time to next crash</td></tr>
+        <tr><td><strong>Condition multiplier</strong></td><td>How much current weather/light/holiday conditions change the baseline crash rate</td></tr>
+    </table>
+
+    <h3>Traffic Volume Data</h3>
+    <p>Where available, traffic volume data (Annual Average Daily Traffic) is sourced from <strong>NZTA's Carriageway dataset</strong> covering state highways and some local roads. This allows crash rates to be expressed per 100 million vehicle-kilometres &mdash; separating genuinely dangerous roads from merely busy ones.</p>
+
+    <h3>Key Findings from the Data</h3>
+    <ul>
+        <li><strong>Vulnerable road users</strong> (pedestrians, cyclists, motorcyclists) are involved in fewer than 10% of crashes but face dramatically higher severity &mdash; a motorcyclist is 7x more likely to die or be seriously injured than a car occupant</li>
+        <li><strong>Rural roads</strong> have double the DSI rate of urban roads (10.4% vs 4.8%)</li>
+        <li><strong>Speed matters</strong> &mdash; 100 km/h zones have an 11% DSI rate vs 4.5% in 50 km/h zones</li>
+        <li><strong>Most crashes happen in good conditions</strong> &mdash; fine weather, daylight, dry roads &mdash; because that's when most driving occurs</li>
+    </ul>
+
+    <h3>Limitations</h3>
+    <ul>
+        <li>The model identifies statistical patterns, not causes &mdash; correlation, not causation</li>
+        <li>CAS only includes police-reported crashes; minor unreported incidents are not captured</li>
+        <li>The CAS API does not provide time-of-day or day-of-week, limiting temporal analysis</li>
+        <li>AADT traffic volumes are only available for state highways, not all local roads</li>
+        <li>ETNA is a statistical average, not a prediction of when the next crash will occur</li>
+    </ul>
+
+    <h3>Technology</h3>
+    <p>Built with LightGBM (machine learning), H3 hexagonal spatial indexing (Uber), Flask, Leaflet.js, PostgreSQL, and Open-Meteo weather API. No GPU required &mdash; all inference runs on CPU in milliseconds.</p>
+
+    <p style="font-size:11px;color:#888;margin-top:20px;border-top:1px solid #333;padding-top:12px;">
+        Data: NZTA/Waka Kotahi Crash Analysis System (CAS), 2000&ndash;2025<br>
+        Traffic: NZTA Carriageway ADT dataset<br>
+        Weather: Open-Meteo API (open source, free)<br>
+        Safe Journeys is a research tool and does not constitute official road safety advice.
+    </p>
+</div>
+</div>
+
 </body>
 </html>
