@@ -493,6 +493,8 @@ body.light-mode .route-panel { background: #f0f4ff; border-top-color: #ddd; }
 body.light-mode .route-panel h3 { color: #888; }
 body.light-mode .route-results { color: #333; }
 body.light-mode .route-stat { color: #333; }
+body.light-mode .route-results select { background: #fff !important; color: #333 !important; border-color: #ccc !important; }
+body.light-mode .route-results div[style*="background:rgba(255,255,255,0.05)"] { background: rgba(0,0,0,0.04) !important; }
 
 </style>
 </head>
@@ -1509,11 +1511,13 @@ function clearRoute() {
 function renderRouteResults(data, originName, destName) {
     const results = document.getElementById('route-results');
 
-    const probPct = data.route_crash_probability;
-    let riskCls = 'safe';
-    let riskLabel = 'Low risk';
-    if (probPct >= 0.1) { riskCls = 'danger'; riskLabel = 'Elevated risk'; }
-    else if (probPct >= 0.01) { riskCls = 'warning'; riskLabel = 'Moderate risk'; }
+    // Risk score colour
+    const score = data.risk_score || 1;
+    let scoreColor = '#2ecc71';  // green
+    let scoreLabel = 'Low Risk';
+    if (score >= 8) { scoreColor = '#e74c3c'; scoreLabel = 'Very High Risk'; }
+    else if (score >= 6) { scoreColor = '#e67e22'; scoreLabel = 'High Risk'; }
+    else if (score >= 4) { scoreColor = '#f39c12'; scoreLabel = 'Moderate Risk'; }
 
     const dsiCls = data.route_dsi_pct >= 15 ? 'danger' : data.route_dsi_pct >= 8 ? 'warning' : 'safe';
 
@@ -1521,20 +1525,59 @@ function renderRouteResults(data, originName, destName) {
     const mins = data.duration_min % 60;
     const durationStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
 
-    let summaryClass = 'route-risk-summary';
-    if (probPct < 0.01) summaryClass += ' low';
-    else if (probPct < 0.1) summaryClass += ' moderate';
+    // Annual risk if driven daily (return trip = x2, x365)
+    const singleTripProb = data.route_crash_probability / 100;
+    const tripsPerWeekDefault = 5;
+    const annualTrips = tripsPerWeekDefault * 2 * 52; // return trips, 52 weeks
+    const annualRisk = (1 - Math.pow(1 - singleTripProb, annualTrips)) * 100;
 
     const hsInfo = data.highest_risk_segment
-        ? `<div style="font-size:11px;color:#ccc;margin-top:6px;">Highest risk near cell at ${data.highest_risk_segment.lat}, ${data.highest_risk_segment.lng} (${data.highest_risk_segment.dsi_pct}% DSI, ${data.highest_risk_segment.speed_limit}km/h)</div>`
+        ? `<div style="font-size:11px;color:#ccc;margin-top:6px;">Highest risk cell: ${data.highest_risk_segment.lat}, ${data.highest_risk_segment.lng} (${data.highest_risk_segment.dsi_pct}% DSI, ${data.highest_risk_segment.speed_limit}km/h)</div>`
         : '';
 
     results.innerHTML = `
-        <div class="${summaryClass}">
-            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${riskLabel}</div>
-            <div style="font-size:20px;font-weight:700;color:inherit;">${data.route_crash_pct}</div>
-            <div style="font-size:11px;color:#888;">chance of a crash on this trip (1 in ${data.one_in_n_trips.toLocaleString()} trips)</div>
+        <div style="text-align:center;margin-top:8px;">
+            <div style="font-size:48px;font-weight:800;color:${scoreColor};line-height:1;">${score}</div>
+            <div style="font-size:11px;font-weight:600;color:${scoreColor};text-transform:uppercase;letter-spacing:1px;">${scoreLabel}</div>
+            <div style="font-size:10px;color:#888;margin-top:2px;">Risk Score (1-10 vs NZ average)</div>
         </div>
+
+        <div style="margin-top:10px;padding:8px 10px;background:rgba(255,255,255,0.05);border-radius:4px;">
+            <div style="font-size:11px;font-weight:600;margin-bottom:4px;color:#f39c12;">Crashes on this route</div>
+            <div class="route-stat">
+                <span>Crashes/year (all vehicles)</span>
+                <span class="route-val" style="color:#f39c12;">${data.crashes_per_year}</span>
+            </div>
+            <div class="route-stat">
+                <span>Hotspot cells (crash &lt;7 days)</span>
+                <span class="route-val" style="color:${data.hotspot_cells > 0 ? '#e74c3c' : '#2ecc71'};">${data.hotspot_cells}</span>
+            </div>
+        </div>
+
+        <div style="margin-top:8px;padding:8px 10px;background:rgba(255,255,255,0.05);border-radius:4px;">
+            <div style="font-size:11px;font-weight:600;margin-bottom:4px;color:#3498db;">Your risk</div>
+            <div class="route-stat">
+                <span>Single trip</span>
+                <span class="route-val">${data.route_crash_pct} (1 in ${data.one_in_n_trips.toLocaleString()})</span>
+            </div>
+            <div class="route-stat">
+                <span>DSI if crash</span>
+                <span class="route-val ${dsiCls}">${data.route_dsi_pct}%</span>
+            </div>
+            <div style="margin-top:6px;">
+                <div class="route-stat">
+                    <span>If driven <select id="trips-per-week" onchange="updateAnnualRisk()" style="background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;font-size:11px;">
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="5" selected>5</option>
+                        <option value="7">7</option>
+                        <option value="10">10</option>
+                    </select>x/week</span>
+                    <span class="route-val" id="annual-risk-val" style="color:${annualRisk >= 1 ? '#e74c3c' : annualRisk >= 0.5 ? '#f39c12' : '#2ecc71'};">${annualRisk.toFixed(2)}%/year</span>
+                </div>
+            </div>
+        </div>
+
         <div style="margin-top:8px;">
             <div class="route-stat">
                 <span>${originName} → ${destName}</span>
@@ -1548,17 +1591,27 @@ function renderRouteResults(data, originName, destName) {
                 <span class="route-val">${durationStr}</span>
             </div>
             <div class="route-stat">
-                <span>Cells Traversed</span>
-                <span class="route-val">${data.cells_with_data} scored / ${data.total_cells} total</span>
-            </div>
-            <div class="route-stat">
-                <span>DSI if Crash</span>
-                <span class="route-val ${dsiCls}">${data.route_dsi_pct}%</span>
+                <span>Cells Scored</span>
+                <span class="route-val">${data.cells_with_data} / ${data.total_cells}</span>
             </div>
         </div>
         ${hsInfo}
     `;
     results.classList.add('active');
+
+    // Store for recalculation
+    results.dataset.singleTripProb = singleTripProb;
+}
+
+function updateAnnualRisk() {
+    const results = document.getElementById('route-results');
+    const singleTripProb = parseFloat(results.dataset.singleTripProb) || 0;
+    const tripsPerWeek = parseInt(document.getElementById('trips-per-week').value) || 5;
+    const annualTrips = tripsPerWeek * 2 * 52;
+    const annualRisk = (1 - Math.pow(1 - singleTripProb, annualTrips)) * 100;
+    const el = document.getElementById('annual-risk-val');
+    el.textContent = annualRisk.toFixed(2) + '%/year';
+    el.style.color = annualRisk >= 1 ? '#e74c3c' : annualRisk >= 0.5 ? '#f39c12' : '#2ecc71';
 }
 
 // ---------------------------------------------------------------

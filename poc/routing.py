@@ -102,9 +102,10 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
     The cell's hourly crash rate is the rate for ALL vehicles combined.
     To get individual risk, we divide by the number of vehicles sharing the road:
 
-        per_vehicle_rate = cell_crash_rate / vehicles_per_hour
-        my_risk = per_vehicle_rate × hours_in_cell
+        my_risk = hourly_rate / vehicles_per_hour
+               = 1 / (total vehicles between crashes)
 
+    Transit time cancels out (see CRASH_RISK_CALCULATION.md for derivation).
     AADT data is used where available; otherwise estimated from road type.
 
     Args:
@@ -123,8 +124,10 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
     total_no_crash_prob = 1.0
     total_dsi_weighted = 0.0
     total_time_hours = 0.0
+    total_crashes_per_year = 0.0  # crashes/year on roads traversed (all vehicles)
     cells_with_data = 0
     cells_without_data = 0
+    hotspot_cells = 0  # cells with ETNA < 7 days
     highest_risk_segment = None
     highest_risk_prob = 0
 
@@ -172,6 +175,12 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
         else:
             crash_prob = 0
 
+        # Track crashes per year on this road (all vehicles, not per-vehicle)
+        cell_crashes_per_year = hourly_rate * 8760
+        total_crashes_per_year += cell_crashes_per_year
+        if hourly_rate > 0 and (1 / hourly_rate) < (7 * 24):  # ETNA < 7 days
+            hotspot_cells += 1
+
         total_no_crash_prob *= (1 - crash_prob)
         total_dsi_weighted += dsi_prob * crash_prob
 
@@ -192,18 +201,31 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
             highest_risk_prob = crash_prob
             highest_risk_segment = seg
 
-    # Overall route probability
+    # Overall route probability (single trip)
     route_crash_prob = 1 - total_no_crash_prob
     route_dsi = (total_dsi_weighted / route_crash_prob * 100) if route_crash_prob > 0 else 0
 
     # Express as "1 in N trips"
     one_in_n = round(1 / route_crash_prob) if route_crash_prob > 0 else 999999
 
+    # Risk score 1-10 based on crash density per km
+    # Baseline: NZ average ~0.75 injury crashes per km per year on state highways
+    route_km = len(route_cells) * CELL_DIAMETER_KM
+    crashes_per_km_year = (total_crashes_per_year / route_km) if route_km > 0 else 0
+    NZ_BASELINE_CRASHES_PER_KM = 0.75  # approximate NZ state highway average
+    risk_ratio = crashes_per_km_year / NZ_BASELINE_CRASHES_PER_KM if NZ_BASELINE_CRASHES_PER_KM > 0 else 0
+    # Map ratio to 1-10 scale: 0.5x baseline = 1, 1x = 3, 2x = 5, 4x = 7, 8x+ = 10
+    import math as _math
+    risk_score = min(10, max(1, round(1 + 3 * _math.log2(max(risk_ratio, 0.25)))))
+
     return {
-        "route_crash_probability": round(route_crash_prob * 100, 4),
-        "route_crash_pct": f"{route_crash_prob * 100:.3f}%",
+        "route_crash_probability": round(route_crash_prob * 100, 6),
+        "route_crash_pct": f"{route_crash_prob * 100:.4f}%",
         "one_in_n_trips": one_in_n,
         "route_dsi_pct": round(route_dsi, 1),
+        "risk_score": risk_score,
+        "crashes_per_year": round(total_crashes_per_year, 1),
+        "hotspot_cells": hotspot_cells,
         "total_cells": len(route_cells),
         "cells_with_data": cells_with_data,
         "cells_without_data": cells_without_data,
