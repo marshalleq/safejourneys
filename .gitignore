@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+
+# Large source data (not tracked in git — use LFS for parquet/pkl)
+CAS_Data_public.csv
+CAS_Data_public.geojson
+Crash_Analysis_System_(CAS)_data.kml
+cas_cleaned.parquet
+
+# Generated HTML maps
+output_*.html
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/

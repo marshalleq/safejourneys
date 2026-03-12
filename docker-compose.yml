@@ -1,0 +1,57 @@
+# Safe Journeys — Docker Compose
+#
+# Quick start:
+#   docker compose up --build
+#
+# What happens on first run:
+#   1. PostgreSQL starts and creates the 'safejourneys' database
+#   2. The app waits for the database to be ready
+#   3. Database schema is created (crash_records, cell_stats, data_refresh_log)
+#   4. 910,823 crash records are loaded from the bundled parquet files (takes ~2 min)
+#   5. The Flask app starts on http://localhost:5001
+#   6. Every 4 hours, new data is fetched from the NZ CAS API automatically
+#
+# Subsequent starts skip the seed step — data persists in the pgdata volume.
+#
+# To reset the database and re-seed:
+#   docker compose down -v     # removes the pgdata volume
+#   docker compose up --build
+#
+# Environment variables (override in .env or inline):
+#   DATABASE_URL             - PostgreSQL connection string
+#   REFRESH_INTERVAL_HOURS   - How often to check the CAS API (default: 4)
+#   CAS_API_URL              - CAS ArcGIS FeatureServer base URL
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: safejourneys
+      POSTGRES_USER: safejourneys
+      POSTGRES_PASSWORD: safejourneys    # Change in production
+    volumes:
+      - pgdata:/var/lib/postgresql/data  # Persists data across restarts
+    ports:
+      - "5432:5432"                      # Expose for debugging; remove in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safejourneys"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports:
+      - "5001:5001"
+    environment:
+      DATABASE_URL: postgresql://safejourneys:safejourneys@db:5432/safejourneys
+      REFRESH_INTERVAL_HOURS: "4"        # Check CAS API every 4 hours
+      CAS_API_URL: "https://services.arcgis.com/CXBb7LAjgIIdcsPt/arcgis/rest/services/CAS_Data_Public/FeatureServer"
+    depends_on:
+      db:
+        condition: service_healthy       # Wait for PostgreSQL to be ready
+    restart: unless-stopped
+
+volumes:
+  pgdata:                                # Named volume for database persistence

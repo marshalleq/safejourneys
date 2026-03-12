@@ -1,0 +1,22 @@
+# Large source files (not needed in image)
+CAS_Data_public.csv
+CAS_Data_public.geojson
+Crash_Analysis_System_(CAS)_data.kml
+cas_cleaned.parquet
+xgb_severity_model.pkl
+
+# Output maps
+output_*.html
+
+# Dev/notebook files
+*.ipynb
+*.ipynb_checkpoints
+__pycache__
+.claude/
+
+# Git
+.git
+.gitignore
+
+# Docs (not needed at runtime)
+*.md

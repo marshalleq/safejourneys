@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Safe Journeys — Interactive Risk Explorer v2</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+#map { position: absolute; top: 0; left: 360px; right: 0; bottom: 0; }
+
+#sidebar {
+    position: absolute; top: 0; left: 0; width: 360px; bottom: 0;
+    background: #1a1a2e; color: #eee; overflow-y: auto;
+    display: flex; flex-direction: column;
+}
+
+.sidebar-header {
+    padding: 16px 20px; background: #16213e;
+    border-bottom: 2px solid #e74c3c;
+}
+.sidebar-header h1 { font-size: 18px; color: #fff; margin-bottom: 4px; }
+.sidebar-header p { font-size: 12px; color: #999; }
+
+.controls { padding: 16px 20px; }
+
+.control-group { margin-bottom: 14px; }
+.control-group label {
+    display: block; font-size: 11px; text-transform: uppercase;
+    color: #888; letter-spacing: 1px; margin-bottom: 5px;
+}
+.control-group select {
+    width: 100%; padding: 7px 10px; border: 1px solid #333;
+    border-radius: 4px; background: #0f3460; color: #eee;
+    font-size: 13px; cursor: pointer;
+}
+.control-group select:focus { border-color: #e74c3c; outline: none; }
+
+/* Layer toggles */
+.layer-toggles {
+    margin-bottom: 16px; padding: 10px 12px;
+    background: rgba(15,52,96,0.5); border-radius: 6px;
+    border: 1px solid #333;
+}
+.layer-toggles h4 {
+    font-size: 10px; text-transform: uppercase; color: #666;
+    letter-spacing: 1px; margin-bottom: 8px;
+}
+.layer-toggle {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px; cursor: pointer; font-size: 12px;
+}
+.layer-toggle:last-child { margin-bottom: 0; }
+.layer-toggle input[type="checkbox"] { accent-color: #e74c3c; cursor: pointer; }
+.layer-toggle .swatch {
+    width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0;
+}
+
+/* Stats panels */
+.stats-panel {
+    padding: 14px 20px; background: #16213e;
+    border-top: 1px solid #333;
+}
+.stats-panel h3 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 1px; }
+.stat-row {
+    display: flex; justify-content: space-between; padding: 3px 0;
+    font-size: 13px;
+}
+.stat-value { font-weight: 700; }
+.stat-value.high, .high { color: #e74c3c; }
+.stat-value.elevated, .elevated { color: #f39c12; }
+.stat-value.moderate, .moderate { color: #f1c40f; }
+.stat-value.low, .low { color: #2ecc71; }
+
+/* Condition multiplier badge */
+.condition-badge {
+    display: inline-block; padding: 4px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 700; margin-top: 2px;
+}
+.condition-badge.danger { background: rgba(231,76,60,0.2); color: #e74c3c; }
+.condition-badge.warning { background: rgba(243,156,18,0.2); color: #f39c12; }
+.condition-badge.safe { background: rgba(46,204,113,0.2); color: #2ecc71; }
+
+/* Hotspots panel */
+.hotspots-panel {
+    padding: 14px 20px; background: #0f3460;
+    border-top: 1px solid #333;
+}
+.hotspots-panel h3 {
+    font-size: 11px; color: #888; text-transform: uppercase;
+    margin-bottom: 8px; letter-spacing: 1px;
+}
+.hotspot-item {
+    display: flex; align-items: center;
+    padding: 6px 8px; margin-bottom: 4px; border-radius: 4px;
+    background: rgba(231,76,60,0.08); cursor: pointer;
+    transition: background 0.15s;
+    font-size: 12px;
+}
+.hotspot-item:hover { background: rgba(231,76,60,0.2); }
+.hotspot-rank {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: #e74c3c; color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+.hotspot-info { flex: 1; margin-left: 8px; }
+.hotspot-etna { font-weight: 700; color: #e74c3c; }
+.hotspot-meta { font-size: 10px; color: #888; }
+
+/* Legend */
+.legend {
+    padding: 10px 20px; background: #0f3460;
+    border-top: 1px solid #333;
+}
+.legend h3 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 6px; }
+.legend-bar {
+    height: 10px; border-radius: 5px; margin-bottom: 4px;
+}
+.legend-bar.severity {
+    background: linear-gradient(to right, #2ecc71, #f1c40f, #e67e22, #e74c3c, #8e44ad);
+}
+.legend-bar.frequency {
+    background: linear-gradient(to right, #2ecc71, #3498db, #f1c40f, #e67e22, #e74c3c);
+}
+.legend-labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; }
+
+/* Hotspot markers legend */
+.legend-markers {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid #333;
+}
+.legend-marker-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11px; color: #999;
+}
+.legend-marker-dot {
+    width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid;
+}
+
+/* Data sources */
+.data-sources {
+    padding: 10px 20px; background: #16213e;
+    border-top: 1px solid #333;
+}
+.data-sources h3 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 6px; }
+.data-source-tag {
+    display: inline-block; padding: 2px 8px; margin: 2px;
+    font-size: 10px; border-radius: 10px;
+}
+.data-source-tag.active { background: #2ecc71; color: #000; }
+.data-source-tag.planned { background: #333; color: #888; }
+
+/* Loading overlay */
+.loading-overlay {
+    position: absolute; top: 0; left: 360px; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5); display: none;
+    justify-content: center; align-items: center; z-index: 1000;
+}
+.loading-overlay.active { display: flex; }
+.loading-spinner {
+    color: white; font-size: 18px; padding: 20px 30px;
+    background: rgba(0,0,0,0.7); border-radius: 8px;
+}
+
+/* Popup (click-to-open info box) — force dark theme on all Leaflet popups */
+.leaflet-popup-content-wrapper {
+    background: #1a1a2e !important;
+    color: #eee !important;
+    border: 1px solid #e74c3c !important;
+    border-radius: 8px !important;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5) !important;
+}
+.leaflet-popup-content {
+    margin: 12px 16px !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    color: #eee !important;
+    max-width: 500px !important;
+    min-width: 350px !important;
+}
+.leaflet-popup-tip {
+    background: #1a1a2e !important;
+}
+.leaflet-popup-close-button {
+    color: #888 !important;
+    font-size: 18px !important;
+}
+.leaflet-popup-close-button:hover {
+    color: #fff !important;
+}
+.tt-label { color: #888; font-size: 11px; }
+.tt-value { font-weight: 700; }
+.tt-high { color: #e74c3c; }
+.tt-elevated { color: #f39c12; }
+.tt-moderate { color: #f1c40f; }
+.tt-low { color: #2ecc71; }
+.tt-divider { border: none; border-top: 1px solid #333; margin: 6px 0; }
+.tt-etna-big { font-size: 16px; font-weight: 700; }
+
+/* On-map legend */
+.map-legend {
+    background: rgba(26,26,46,0.92); color: #eee;
+    padding: 12px 16px; border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    font-size: 12px; line-height: 1.6;
+    border: 1px solid #333;
+    max-width: 220px;
+}
+.map-legend h4 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: #888; margin: 0 0 8px 0;
+}
+.map-legend-section { margin-bottom: 10px; }
+.map-legend-section:last-child { margin-bottom: 0; }
+.map-legend-bar {
+    height: 8px; border-radius: 4px; margin-bottom: 3px;
+}
+.map-legend-labels {
+    display: flex; justify-content: space-between;
+    font-size: 9px; color: #888;
+}
+.map-legend-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+.map-legend-dot {
+    width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid #fff; display: flex; align-items: center;
+    justify-content: center; font-size: 8px; font-weight: 800; color: #fff;
+}
+.map-legend-dot-label { font-size: 11px; color: #ccc; }
+.map-legend-divider {
+    border: none; border-top: 1px solid #444; margin: 8px 0;
+}
+
+/* Pulsing hotspot markers on map */
+@keyframes pulse-ring {
+    0%   { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%,-50%) scale(3); opacity: 0; }
+}
+.hotspot-icon {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+.hotspot-icon-core {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 0 10px rgba(0,0,0,0.7);
+    z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 800; color: #fff;
+    text-shadow: 0 0 3px rgba(0,0,0,0.9);
+}
+.hotspot-icon-ring {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    z-index: 1;
+    animation: pulse-ring 2s ease-out infinite;
+}
+
+/* ---- Light theme overrides ---- */
+body.light-mode #sidebar {
+    background: #f5f5f5; color: #222;
+}
+body.light-mode .sidebar-header {
+    background: #fff; border-bottom-color: #e74c3c;
+}
+body.light-mode .sidebar-header h1 { color: #222; }
+body.light-mode .sidebar-header p { color: #666; }
+body.light-mode .controls { color: #222; }
+body.light-mode .control-group label { color: #666; }
+body.light-mode .control-group select {
+    background: #fff; color: #222; border-color: #ccc;
+}
+body.light-mode .layer-toggles {
+    background: rgba(0,0,0,0.04); border-color: #ddd;
+}
+body.light-mode .layer-toggles h4 { color: #999; }
+body.light-mode .layer-toggle { color: #333; }
+body.light-mode .stats-panel {
+    background: #fff; border-top-color: #ddd; color: #222;
+}
+body.light-mode .stats-panel h3 { color: #888; }
+body.light-mode .stat-row { color: #333; }
+body.light-mode .hotspots-panel {
+    background: #fafafa; border-top-color: #ddd;
+}
+body.light-mode .hotspots-panel h3 { color: #888; }
+body.light-mode .hotspot-item {
+    background: rgba(231,76,60,0.06); color: #222;
+}
+body.light-mode .hotspot-item:hover { background: rgba(231,76,60,0.12); }
+body.light-mode .hotspot-info div[style*="color:#fff"] { color: #222 !important; }
+body.light-mode .hotspot-meta { color: #666; }
+body.light-mode .data-sources {
+    background: #fff; border-top-color: #ddd;
+}
+body.light-mode .data-sources h3 { color: #888; }
+body.light-mode .data-source-tag.planned { background: #e0e0e0; color: #888; }
+body.light-mode .legend { background: #fafafa; border-top-color: #ddd; }
+body.light-mode .legend h3 { color: #888; }
+body.light-mode .legend-labels { color: #666; }
+
+/* Light mode map legend */
+body.light-mode .map-legend {
+    background: rgba(255,255,255,0.95); color: #222;
+    border-color: #ccc;
+}
+body.light-mode .map-legend h4 { color: #666; }
+body.light-mode .map-legend-dot-label { color: #444; }
+body.light-mode .map-legend-divider { border-top-color: #ddd; }
+body.light-mode .map-legend-labels { color: #666; }
+
+/* Light mode popups */
+body.light-mode .leaflet-popup-content-wrapper {
+    background: #fff !important; color: #222 !important;
+    border-color: #e74c3c !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15) !important;
+}
+body.light-mode .leaflet-popup-content { color: #222 !important; }
+body.light-mode .leaflet-popup-tip { background: #fff !important; }
+body.light-mode .tt-label { color: #666; }
+body.light-mode .tt-divider { border-top-color: #ddd; }
+
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+    <div class="sidebar-header">
+        <h1>Safe Journeys</h1>
+        <p>Interactive Risk Explorer v2 — Severity + Frequency Model</p>
+    </div>
+
+    <div class="controls">
+        <!-- Layer toggles -->
+        <div class="layer-toggles">
+            <h4>Map Layers</h4>
+            <label class="layer-toggle">
+                <input type="checkbox" id="layer-severity" checked onchange="toggleLayer('severity')">
+                <span class="swatch" style="background: linear-gradient(135deg, #2ecc71, #e74c3c);"></span>
+                Severity Risk (hex grid)
+            </label>
+            <label class="layer-toggle">
+                <input type="checkbox" id="layer-hotspots" checked onchange="toggleLayer('hotspots')">
+                <span class="swatch" style="background: #e74c3c; box-shadow: 0 0 4px #e74c3c;"></span>
+                Crash Frequency Hotspots
+            </label>
+            <label class="layer-toggle">
+                <input type="checkbox" id="theme-toggle" onchange="toggleTheme()">
+                <span class="swatch" style="background: linear-gradient(135deg, #333 50%, #eee 50%);"></span>
+                Light Map Mode
+            </label>
+        </div>
+
+        <div class="control-group">
+            <label>Weather Conditions</label>
+            <select id="weather">
+                <option value="any">Any (as recorded)</option>
+                <option value="fine">Fine / Clear</option>
+                <option value="rain">Rain / Wet</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label>Light / Time of Day</label>
+            <select id="light">
+                <option value="any">Any (as recorded)</option>
+                <option value="day">Daylight</option>
+                <option value="twilight">Twilight / Dawn / Dusk</option>
+                <option value="dark">Dark / Night</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label>Speed Limit</label>
+            <select id="speed_limit">
+                <option value="any">Any (as recorded)</option>
+                <option value="30">30 km/h</option>
+                <option value="40">40 km/h</option>
+                <option value="50">50 km/h</option>
+                <option value="60">60 km/h</option>
+                <option value="70">70 km/h</option>
+                <option value="80">80 km/h</option>
+                <option value="100">100 km/h</option>
+                <option value="110">110 km/h</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label>Vehicle / Road User</label>
+            <select id="vehicle">
+                <option value="any">Any (as recorded)</option>
+                <option value="motorcycle">Motorcycle</option>
+                <option value="pedestrian">Pedestrian</option>
+                <option value="bicycle">Cyclist</option>
+                <option value="truck">Heavy Vehicle / Truck</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label>Road Type</label>
+            <select id="road">
+                <option value="any">Any (as recorded)</option>
+                <option value="intersection">Intersection</option>
+                <option value="hill">Hill Road</option>
+                <option value="straight">Straight / Flat</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Severity stats -->
+    <div class="stats-panel" id="severity-stats">
+        <h3>Severity Predictions</h3>
+        <div class="stat-row">
+            <span>Mean DSI Risk</span>
+            <span class="stat-value" id="stat-mean">—</span>
+        </div>
+        <div class="stat-row">
+            <span>Peak DSI Risk</span>
+            <span class="stat-value" id="stat-max">—</span>
+        </div>
+        <div class="stat-row">
+            <span>High Risk Cells (&ge;15%)</span>
+            <span class="stat-value high" id="stat-high">—</span>
+        </div>
+        <div class="stat-row">
+            <span>Elevated Risk Cells</span>
+            <span class="stat-value elevated" id="stat-elevated">—</span>
+        </div>
+    </div>
+
+    <!-- Frequency stats -->
+    <div class="stats-panel" id="frequency-stats">
+        <h3>Frequency Predictions</h3>
+        <div class="stat-row">
+            <span>Shortest time to crash</span>
+            <span class="stat-value high" id="stat-shortest-etna">—</span>
+        </div>
+        <div class="stat-row">
+            <span>Median time to crash</span>
+            <span class="stat-value" id="stat-median-etna">—</span>
+        </div>
+        <div class="stat-row">
+            <span>Condition multiplier</span>
+            <span id="stat-multiplier"><span class="condition-badge safe">1.00x baseline</span></span>
+        </div>
+        <div class="stat-row">
+            <span>Cells scored</span>
+            <span class="stat-value" id="stat-total">—</span>
+        </div>
+    </div>
+
+    <!-- Top hotspots -->
+    <div class="hotspots-panel" id="hotspots-panel">
+        <h3>Most Imminent Crash Locations</h3>
+        <div id="hotspot-list"></div>
+    </div>
+
+    <div class="data-sources">
+        <h3>Data Sources</h3>
+        <span class="data-source-tag active">CAS Crash Data</span>
+        <span class="data-source-tag active">H3 Spatial Grid</span>
+        <span class="data-source-tag active">LightGBM Model</span>
+        <span class="data-source-tag active">Poisson Frequency</span>
+        <span class="data-source-tag planned">Live Weather</span>
+        <span class="data-source-tag planned">Traffic Counts</span>
+    </div>
+</div>
+
+<div id="map"></div>
+<div class="loading-overlay" id="loading">
+    <div class="loading-spinner">Scoring 5,000 cells...</div>
+</div>
+
+<script>
+// ---------------------------------------------------------------
+// State
+// ---------------------------------------------------------------
+let hexLayer = null;
+let hotspotMarkerLayer = null;  // separate overlay for frequency markers
+let cellData = {};   // h3 -> properties (from /api/cells)
+let scoreData = {};  // h3 -> {dsi_pct, etna_hours, etna_label, hourly_rate}
+let currentStats = null;
+let currentHotspots = [];
+let isScored = false;
+let showSeverityLayer = true;
+let showHotspotLayer = true;
+
+// Number of hotspot markers to show on map
+const HOTSPOT_MARKER_COUNT = 50;
+
+// ---------------------------------------------------------------
+// Reverse geocoding (OpenStreetMap Nominatim)
+// ---------------------------------------------------------------
+const addressCache = {};   // "lat,lng" -> address string
+const addressQueue = [];   // pending requests
+let geocodeBusy = false;
+
+function getAddressKey(lat, lng) {
+    return `${lat},${lng}`;
+}
+
+function reverseGeocode(lat, lng, callback, priority) {
+    const key = getAddressKey(lat, lng);
+    if (addressCache[key]) {
+        callback(addressCache[key]);
+        return;
+    }
+    // Priority requests (user clicks) go to front of queue
+    if (priority) {
+        addressQueue.unshift({ lat, lng, key, callback });
+    } else {
+        addressQueue.push({ lat, lng, key, callback });
+    }
+    processGeoQueue();
+}
+
+// Direct fetch for immediate user-initiated lookups (bypasses queue)
+function reverseGeocodeNow(lat, lng, callback) {
+    const key = getAddressKey(lat, lng);
+    if (addressCache[key]) {
+        callback(addressCache[key]);
+        return;
+    }
+    fetch(`/api/geocode?lat=${lat}&lng=${lng}`)
+    .then(r => r.json())
+    .then(data => {
+        addressCache[key] = data.address || `${lat}, ${lng}`;
+        callback(addressCache[key]);
+    })
+    .catch(() => {
+        addressCache[key] = `${lat}, ${lng}`;
+        callback(addressCache[key]);
+    });
+}
+
+function processGeoQueue() {
+    if (geocodeBusy || addressQueue.length === 0) return;
+    geocodeBusy = true;
+    const { lat, lng, key, callback } = addressQueue.shift();
+
+    if (addressCache[key]) {
+        callback(addressCache[key]);
+        geocodeBusy = false;
+        setTimeout(processGeoQueue, 50);
+        return;
+    }
+
+    fetch(`/api/geocode?lat=${lat}&lng=${lng}`)
+    .then(r => r.json())
+    .then(data => {
+        addressCache[key] = data.address || `${lat}, ${lng}`;
+        callback(addressCache[key]);
+    })
+    .catch(() => {
+        addressCache[key] = `${lat}, ${lng}`;
+        callback(addressCache[key]);
+    })
+    .finally(() => {
+        geocodeBusy = false;
+        // Nominatim rate limit: 1 req/sec
+        setTimeout(processGeoQueue, 1100);
+    });
+}
+
+// Batch-fetch addresses for a list of hotspots and call back when done
+function fetchHotspotAddresses(hotspots, onUpdate) {
+    hotspots.forEach((h, i) => {
+        reverseGeocode(h.lat, h.lng, (addr) => {
+            h.address = addr;
+            onUpdate(i, addr);
+        });
+    });
+}
+
+// ---------------------------------------------------------------
+// Map setup
+// ---------------------------------------------------------------
+const map = L.map('map', { preferCanvas: true }).setView([-41.3, 174.8], 6);
+
+const TILE_DARK = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
+});
+const TILE_LIGHT = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
+});
+TILE_DARK.addTo(map);
+let currentTile = TILE_DARK;
+
+function toggleTheme() {
+    const isLight = document.getElementById('theme-toggle').checked;
+    document.body.classList.toggle('light-mode', isLight);
+    if (isLight) {
+        map.removeLayer(TILE_DARK);
+        TILE_LIGHT.addTo(map);
+        currentTile = TILE_LIGHT;
+    } else {
+        map.removeLayer(TILE_LIGHT);
+        TILE_DARK.addTo(map);
+        currentTile = TILE_DARK;
+    }
+    // Adjust hex opacity — lighter in light mode so map detail shows through
+    if (hexLayer) {
+        hexLayer.eachLayer(layer => {
+            layer.setStyle({ fillOpacity: isLight ? 0.4 : 0.55 });
+        });
+    }
+}
+
+// Close popups on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        map.closePopup();
+    }
+});
+
+// ---------------------------------------------------------------
+// On-map legend
+// ---------------------------------------------------------------
+const legendControl = L.control({ position: 'bottomright' });
+legendControl.onAdd = function() {
+    const div = L.DomUtil.create('div', 'map-legend');
+    div.innerHTML = `
+        <div class="map-legend-section">
+            <h4>Hex Grid — Severity Risk</h4>
+            <div class="map-legend-bar" style="background: linear-gradient(to right, #2ecc71, #f1c40f, #e67e22, #e74c3c, #8e44ad);"></div>
+            <div class="map-legend-labels">
+                <span>Low &lt;4%</span>
+                <span>Mod</span>
+                <span>Elev</span>
+                <span>High &gt;15%</span>
+            </div>
+        </div>
+        <hr class="map-legend-divider">
+        <div class="map-legend-section">
+            <h4>Markers — Crash Frequency</h4>
+            <div class="map-legend-row">
+                <div class="map-legend-dot" style="background:#e74c3c;">1</div>
+                <span class="map-legend-dot-label">&lt; 1 week — Rank #</span>
+            </div>
+            <div class="map-legend-row">
+                <div class="map-legend-dot" style="background:#f39c12;"></div>
+                <span class="map-legend-dot-label">&lt; 1 month</span>
+            </div>
+            <div class="map-legend-row">
+                <div class="map-legend-dot" style="background:#f1c40f;"></div>
+                <span class="map-legend-dot-label">&lt; 3 months</span>
+            </div>
+            <div style="font-size:10px; color:#888; margin-top:4px;">
+                Number = frequency rank<br>(1 = most imminent crash)
+            </div>
+        </div>
+    `;
+    return div;
+};
+legendControl.addTo(map);
+
+// ---------------------------------------------------------------
+// Colour scales
+// ---------------------------------------------------------------
+function dsiColor(pct) {
+    if (pct >= 25) return '#8e44ad';
+    if (pct >= 15) return '#e74c3c';
+    if (pct >= 8)  return '#e67e22';
+    if (pct >= 4)  return '#f1c40f';
+    return '#2ecc71';
+}
+
+function etnaMarkerColor(hours) {
+    if (hours <= 168)    return { fill: '#e74c3c', ring: 'rgba(231,76,60,0.5)' };   // < 1 week
+    if (hours <= 720)    return { fill: '#f39c12', ring: 'rgba(243,156,18,0.4)' };   // < 1 month
+    if (hours <= 2190)   return { fill: '#f1c40f', ring: 'rgba(241,196,15,0.3)' };   // < 3 months
+    return null; // don't show markers for > 3 months
+}
+
+function riskLabel(pct) {
+    if (pct >= 15) return 'HIGH';
+    if (pct >= 8)  return 'ELEVATED';
+    if (pct >= 4)  return 'MODERATE';
+    return 'LOW';
+}
+
+function riskClass(pct) {
+    if (pct >= 15) return 'tt-high';
+    if (pct >= 8)  return 'tt-elevated';
+    if (pct >= 4)  return 'tt-moderate';
+    return 'tt-low';
+}
+
+function etnaUrgency(hours) {
+    if (hours <= 168)   return 'tt-high';
+    if (hours <= 720)   return 'tt-high';
+    if (hours <= 2190)  return 'tt-elevated';
+    if (hours <= 8760)  return 'tt-moderate';
+    return 'tt-low';
+}
+
+function etnaUrgencyLabel(hours) {
+    if (hours <= 168)   return 'CRITICAL';
+    if (hours <= 720)   return 'VERY HIGH';
+    if (hours <= 2190)  return 'HIGH';
+    if (hours <= 8760)  return 'MODERATE';
+    return 'LOW';
+}
+
+function hoursToHuman(hours) {
+    if (hours < 1) return Math.round(hours * 60) + 'min';
+    if (hours < 24) return Math.round(hours) + 'hrs';
+    if (hours < 24 * 30) return Math.round(hours / 24) + 'd';
+    if (hours < 24 * 365) return Math.round(hours / (24 * 30)) + 'mo';
+    return (hours / (24 * 365)).toFixed(1) + 'yr';
+}
+
+function colorStatValue(id, val) {
+    const el = document.getElementById(id);
+    el.className = 'stat-value ' + (val >= 15 ? 'high' : val >= 8 ? 'elevated' : val >= 4 ? 'moderate' : 'low');
+}
+
+// ---------------------------------------------------------------
+// Layer toggles
+// ---------------------------------------------------------------
+function toggleLayer(which) {
+    if (which === 'severity') {
+        showSeverityLayer = document.getElementById('layer-severity').checked;
+        if (hexLayer) {
+            if (showSeverityLayer) hexLayer.addTo(map);
+            else map.removeLayer(hexLayer);
+        }
+    } else if (which === 'hotspots') {
+        showHotspotLayer = document.getElementById('layer-hotspots').checked;
+        if (hotspotMarkerLayer) {
+            if (showHotspotLayer) hotspotMarkerLayer.addTo(map);
+            else map.removeLayer(hotspotMarkerLayer);
+        }
+    }
+}
+
+// ---------------------------------------------------------------
+// Hotspot marker overlay (pulsing dots on the map)
+// ---------------------------------------------------------------
+function buildHotspotMarkers(hotspotList) {
+    // Remove old layer
+    if (hotspotMarkerLayer) {
+        map.removeLayer(hotspotMarkerLayer);
+    }
+
+    hotspotMarkerLayer = L.layerGroup();
+
+    hotspotList.forEach((h, i) => {
+        const colors = etnaMarkerColor(h.etna_hours);
+        if (!colors) return; // skip if > 3 months
+
+        const coreSize = h.etna_hours <= 168 ? 22 : h.etna_hours <= 720 ? 18 : 14;
+        const ringSize = coreSize + 12;
+        const boxSize = ringSize * 3; // enough room for the pulse animation
+
+        const label = i < 10 ? (i + 1) : '';
+
+        const icon = L.divIcon({
+            className: '',
+            iconSize: [boxSize, boxSize],
+            iconAnchor: [boxSize / 2, boxSize / 2],
+            html: `<div class="hotspot-icon">
+                <div class="hotspot-icon-ring" style="
+                    width:${ringSize}px; height:${ringSize}px;
+                    background:${colors.ring};
+                    animation-delay:${(i * 0.12) % 2}s;
+                "></div>
+                <div class="hotspot-icon-core" style="
+                    width:${coreSize}px; height:${coreSize}px;
+                    background:${colors.fill};
+                ">${label}</div>
+            </div>`,
+        });
+
+        const marker = L.marker([h.lat, h.lng], { icon, zIndexOffset: 1000 - i });
+
+        const urgCls = etnaUrgency(h.etna_hours);
+        const dsiCls = riskClass(h.dsi_pct);
+        const riskFHtml = renderRiskFactorsHtml(h.risk_factors);
+        const mitsHtml = renderMitigationsHtml(h.mitigations);
+
+        function buildPopupContent() {
+            const addrKey = getAddressKey(h.lat, h.lng);
+            const addr = addressCache[addrKey] || null;
+            const addrLine = addr
+                ? `<div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:4px;">${addr}</div>`
+                : `<div style="font-size:11px;color:#666;margin-bottom:4px;">Loading location...</div>`;
+            return `
+                <div>
+                    <div style="font-size:11px;color:#888;margin-bottom:2px">CRASH FREQUENCY HOTSPOT #${i+1}</div>
+                    ${addrLine}
+                    <div style="margin-bottom:6px">
+                        <span style="font-size:10px;color:#888">Next crash expected in:</span><br>
+                        <span class="tt-etna-big ${urgCls}">${h.etna_label}</span>
+                        <span style="font-size:11px;color:#888;margin-left:4px">(${etnaUrgencyLabel(h.etna_hours)})</span>
+                    </div>
+                    <hr class="tt-divider">
+                    <div><span class="tt-label">DSI Severity:</span> <span class="tt-value ${dsiCls}">${h.dsi_pct}% (${riskLabel(h.dsi_pct)})</span></div>
+                    <div><span class="tt-label">Total Crashes:</span> <span class="tt-value">${h.crashes.toLocaleString()}</span></div>
+                    <div><span class="tt-label">Last recorded crash:</span> <span class="tt-value">${h.last_crash_year || 'Unknown'}</span></div>
+                    ${h.main_road ? `<div><span class="tt-label">Main road:</span> <span class="tt-value">${h.main_road}</span></div>` : ''}
+                    <div><span class="tt-label">Speed Limit:</span> <span class="tt-value">${h.speed_limit} km/h</span></div>
+                    ${riskFHtml}
+                    ${mitsHtml}
+                </div>
+            `;
+        }
+
+        marker.bindPopup(() => buildPopupContent(), {
+            className: 'popup-hotspot', maxWidth: 500, minWidth: 350, offset: [0, -coreSize / 2],
+        });
+
+        marker.on('popupopen', () => {
+            const addrKey = getAddressKey(h.lat, h.lng);
+            if (!addressCache[addrKey]) {
+                reverseGeocodeNow(h.lat, h.lng, () => {
+                    if (marker.isPopupOpen()) {
+                        marker.getPopup().setContent(buildPopupContent());
+                        marker.getPopup().update();
+                    }
+                });
+            }
+        });
+
+        hotspotMarkerLayer.addLayer(marker);
+    });
+
+    if (showHotspotLayer) {
+        hotspotMarkerLayer.addTo(map);
+    }
+}
+
+// ---------------------------------------------------------------
+// Mitigation rendering
+// ---------------------------------------------------------------
+function renderRiskFactorsHtml(riskFactors) {
+    if (!riskFactors || riskFactors.length === 0) return '';
+    const items = riskFactors.map(f =>
+        `<div style="margin-bottom:4px;padding-left:12px;border-left:2px solid #e67e22;">
+            <span style="font-size:11px;color:#ddd;">${f}</span>
+        </div>`
+    ).join('');
+    return `<hr class="tt-divider">
+        <div style="font-size:10px;color:#e67e22;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;font-weight:700;">Why This Location Is Flagged</div>
+        ${items}`;
+}
+
+function renderMitigationsHtml(mitigations) {
+    if (!mitigations || mitigations.length === 0) return '';
+    const items = mitigations.slice(0, 3).map(m =>
+        `<div style="margin-bottom:3px">
+            <span style="color:#3498db;font-size:11px;font-weight:700;">&#9654;</span>
+            <span style="font-size:11px;color:#eee;">${m.action}</span>
+            <div style="font-size:9px;color:#888;margin-left:12px;">${m.reason}</div>
+        </div>`
+    ).join('');
+    return `<hr class="tt-divider">
+        <div style="font-size:10px;color:#3498db;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;font-weight:700;">Suggested Mitigations</div>
+        ${items}`;
+}
+
+// ---------------------------------------------------------------
+// Hex tooltip
+// ---------------------------------------------------------------
+function makeTooltip(h3id) {
+    const props = cellData[h3id];
+    if (!props) return '';
+    const sc = isScored && scoreData[h3id] ? scoreData[h3id] : null;
+
+    const dsi = sc ? sc.dsi_pct : props.dsi_pct;
+    const etnaHours = sc ? sc.etna_hours : (props.etna_hours || 999999);
+    const etnaLabel = sc ? sc.etna_label : (props.etna_label || '—');
+    const cls = riskClass(dsi);
+    const eCls = etnaUrgency(etnaHours);
+    const riskFactorsHtml = renderRiskFactorsHtml(props.risk_factors);
+    const mitigationsHtml = renderMitigationsHtml(props.mitigations);
+    const addrKey = getAddressKey(props.lat, props.lng);
+    const addr = addressCache[addrKey] || null;
+    const addrHtml = addr
+        ? `<div style="font-size:12px;font-weight:700;color:#fff;margin-bottom:2px;">${addr}</div>`
+        : `<div style="font-size:11px;color:#666;margin-bottom:2px;">Loading location...</div>`;
+    const roadHtml = props.main_road ? `<div style="font-size:10px;color:#aaa;margin-bottom:4px;">Main road: ${props.main_road}</div>` : '';
+    const lastYear = props.last_crash_year || 0;
+    const yearSpan = lastYear && props.first_crash_year ? `${props.first_crash_year}–${lastYear}` : '';
+
+    return `
+        <div>
+            ${addrHtml}
+            ${roadHtml}
+            <div style="margin-bottom:4px">
+                <span class="tt-label">Next crash expected in:</span><br>
+                <span class="tt-etna-big ${eCls}">${etnaLabel}</span>
+                <span style="font-size:11px;color:#888;margin-left:4px">(${etnaUrgencyLabel(etnaHours)})</span>
+            </div>
+            <hr class="tt-divider">
+            <div style="margin-bottom:4px">
+                <span class="tt-label">DSI Severity Risk:</span>
+                <span class="tt-value ${cls}">${dsi}%</span>
+                <span class="tt-value ${cls}">(${riskLabel(dsi)})</span>
+            </div>
+            <div><span class="tt-label">Total Crashes:</span> <span class="tt-value">${props.crashes.toLocaleString()}</span>
+                ${yearSpan ? `<span class="tt-label" style="margin-left:6px">(${yearSpan})</span>` : ''}</div>
+            <div><span class="tt-label">Last recorded crash:</span> <span class="tt-value">${lastYear || 'Unknown'}</span></div>
+            <div><span class="tt-label">Fatal:</span> <span class="tt-value tt-high">${props.fatal}</span>
+                 <span class="tt-label" style="margin-left:8px">Serious:</span> <span class="tt-value tt-elevated">${props.serious}</span></div>
+            <div><span class="tt-label">Annual Rate:</span> <span class="tt-value">${props.annual_rate}/yr</span></div>
+            <div><span class="tt-label">Speed Limit:</span> <span class="tt-value">${props.speed_limit} km/h</span></div>
+            ${riskFactorsHtml}
+            ${mitigationsHtml}
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------
+// Load initial cells
+// ---------------------------------------------------------------
+fetch('/api/cells')
+    .then(r => r.json())
+    .then(geojson => {
+        geojson.features.forEach(f => {
+            cellData[f.properties.h3] = f.properties;
+        });
+
+        hexLayer = L.geoJSON(geojson, {
+            style: feature => {
+                const color = dsiColor(feature.properties.dsi_pct);
+                return {
+                    fillColor: color, fillOpacity: 0.55,
+                    color: color, weight: 1, opacity: 0.7,
+                };
+            },
+            onEachFeature: (feature, layer) => {
+                layer.h3id = feature.properties.h3;
+                layer.bindPopup(() => makeTooltip(feature.properties.h3), {
+                    className: 'popup-custom', maxWidth: 500, minWidth: 350,
+                });
+                layer.on('popupopen', () => {
+                    const p = feature.properties;
+                    const addrKey = getAddressKey(p.lat, p.lng);
+                    if (!addressCache[addrKey]) {
+                        reverseGeocodeNow(p.lat, p.lng, () => {
+                            if (layer.isPopupOpen()) {
+                                layer.getPopup().setContent(makeTooltip(p.h3));
+                                layer.getPopup().update();
+                            }
+                        });
+                    }
+                });
+            },
+        }).addTo(map);
+
+        updateStatsFromBaseline();
+        buildBaselineHotspots();
+    });
+
+function updateStatsFromBaseline() {
+    const vals = Object.values(cellData);
+    if (vals.length === 0) return;
+
+    const dsiArr = vals.map(p => p.dsi_pct);
+    const mean = dsiArr.reduce((a, b) => a + b, 0) / dsiArr.length;
+    const max = Math.max(...dsiArr);
+    const high = dsiArr.filter(v => v >= 15).length;
+    const elev = dsiArr.filter(v => v >= 8 && v < 15).length;
+
+    document.getElementById('stat-mean').textContent = mean.toFixed(1) + '%';
+    document.getElementById('stat-max').textContent = max.toFixed(1) + '%';
+    document.getElementById('stat-high').textContent = high.toLocaleString();
+    document.getElementById('stat-elevated').textContent = elev.toLocaleString();
+    document.getElementById('stat-total').textContent = vals.length.toLocaleString();
+
+    colorStatValue('stat-mean', mean);
+    colorStatValue('stat-max', max);
+
+    const etnaArr = vals.map(p => p.etna_hours || 999999).sort((a, b) => a - b);
+    const shortest = vals.reduce((best, p) => (!best || (p.etna_hours || 999999) < (best.etna_hours || 999999)) ? p : best, null);
+    document.getElementById('stat-shortest-etna').textContent = shortest ? shortest.etna_label : '—';
+    const medIdx = Math.floor(etnaArr.length / 2);
+    document.getElementById('stat-median-etna').textContent = hoursToHuman(etnaArr[medIdx]);
+}
+
+function buildBaselineHotspots() {
+    const entries = Object.entries(cellData)
+        .map(([h3, p]) => ({ h3, ...p }))
+        .sort((a, b) => (a.etna_hours || 999999) - (b.etna_hours || 999999));
+
+    // Top 10 for sidebar list
+    const top10 = entries.slice(0, 10).map(e => ({
+        h3: e.h3, etna_label: e.etna_label, etna_hours: e.etna_hours,
+        dsi_pct: e.dsi_pct, crashes: e.crashes, lat: e.lat, lng: e.lng,
+        speed_limit: e.speed_limit, mitigations: e.mitigations,
+        risk_factors: e.risk_factors,
+        last_crash_year: e.last_crash_year, main_road: e.main_road,
+    }));
+    renderHotspots(top10);
+
+    // Top N for map markers
+    const topN = entries.slice(0, HOTSPOT_MARKER_COUNT).map(e => ({
+        h3: e.h3, etna_label: e.etna_label, etna_hours: e.etna_hours,
+        dsi_pct: e.dsi_pct, crashes: e.crashes, lat: e.lat, lng: e.lng,
+        speed_limit: e.speed_limit, mitigations: e.mitigations,
+        risk_factors: e.risk_factors,
+        last_crash_year: e.last_crash_year, main_road: e.main_road,
+    }));
+    buildHotspotMarkers(topN);
+}
+
+// ---------------------------------------------------------------
+// Sidebar hotspot list
+// ---------------------------------------------------------------
+function renderHotspots(hotspots) {
+    const container = document.getElementById('hotspot-list');
+    container.innerHTML = '';
+    currentHotspots = hotspots;
+    hotspots.forEach((h, i) => {
+        const div = document.createElement('div');
+        div.className = 'hotspot-item';
+        div.id = `hotspot-${i}`;
+        div.onclick = () => map.setView([h.lat, h.lng], 14);
+        const eCls = etnaUrgency(h.etna_hours);
+        const topMit = h.mitigations && h.mitigations.length > 0 ? h.mitigations[0].action : '';
+        const addrKey = getAddressKey(h.lat, h.lng);
+        const addr = addressCache[addrKey] || null;
+        const road = h.main_road || '';
+        const lastYr = h.last_crash_year || '';
+        div.innerHTML = `
+            <div class="hotspot-rank">${i + 1}</div>
+            <div class="hotspot-info">
+                <div style="font-size:11px;font-weight:600;color:#fff;margin-bottom:1px;" id="hotspot-addr-${i}">${addr || road || 'Loading...'}</div>
+                <div class="hotspot-etna ${eCls}">Next crash: ${h.etna_label}</div>
+                <div class="hotspot-meta">${h.crashes} crashes &middot; ${h.speed_limit}km/h${lastYr ? ` &middot; last: ${lastYr}` : ''}</div>
+                ${topMit ? `<div class="hotspot-meta" style="color:#3498db;margin-top:1px;">&#9654; ${topMit}</div>` : ''}
+            </div>
+        `;
+        container.appendChild(div);
+    });
+
+    // Fetch addresses for sidebar hotspots
+    fetchHotspotAddresses(hotspots, (i, addr) => {
+        const el = document.getElementById(`hotspot-addr-${i}`);
+        if (el) el.textContent = addr;
+    });
+}
+
+// ---------------------------------------------------------------
+// Re-score when controls change
+// ---------------------------------------------------------------
+let scoreTimeout = null;
+
+function onControlChange() {
+    clearTimeout(scoreTimeout);
+    scoreTimeout = setTimeout(doScore, 200);
+}
+
+function doScore() {
+    const params = {
+        weather: document.getElementById('weather').value,
+        light: document.getElementById('light').value,
+        speed_limit: document.getElementById('speed_limit').value,
+        vehicle: document.getElementById('vehicle').value,
+        road: document.getElementById('road').value,
+    };
+
+    if (Object.values(params).every(v => v === 'any')) {
+        isScored = false;
+        scoreData = {};
+        updateHexColors();
+        updateStatsFromBaseline();
+        buildBaselineHotspots();
+        updateMultiplierBadge(1.0);
+        return;
+    }
+
+    document.getElementById('loading').classList.add('active');
+
+    fetch('/api/score', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(data => {
+        scoreData = data.scores;
+        isScored = true;
+        currentStats = data.stats;
+
+        updateHexColors();
+
+        if (data.stats) {
+            document.getElementById('stat-mean').textContent = data.stats.mean_dsi + '%';
+            document.getElementById('stat-max').textContent = data.stats.max_dsi + '%';
+            document.getElementById('stat-high').textContent = data.stats.high_risk_count.toLocaleString();
+            document.getElementById('stat-elevated').textContent = data.stats.elevated_count.toLocaleString();
+            document.getElementById('stat-total').textContent = data.stats.cells_scored.toLocaleString();
+            colorStatValue('stat-mean', data.stats.mean_dsi);
+            colorStatValue('stat-max', data.stats.max_dsi);
+
+            document.getElementById('stat-shortest-etna').textContent = data.stats.shortest_etna;
+            document.getElementById('stat-median-etna').textContent = data.stats.median_etna;
+            updateMultiplierBadge(data.stats.condition_multiplier);
+
+            if (data.stats.hotspots) {
+                renderHotspots(data.stats.hotspots);
+                buildHotspotMarkers(data.stats.hotspots);
+            }
+        }
+
+        document.getElementById('loading').classList.remove('active');
+    })
+    .catch(err => {
+        console.error(err);
+        document.getElementById('loading').classList.remove('active');
+    });
+}
+
+function updateMultiplierBadge(mult) {
+    const el = document.getElementById('stat-multiplier');
+    let cls = 'safe';
+    if (mult >= 1.5) cls = 'danger';
+    else if (mult >= 1.1) cls = 'warning';
+    else if (mult < 0.8) cls = 'safe';
+    el.innerHTML = `<span class="condition-badge ${cls}">${mult.toFixed(2)}x ${mult >= 1.1 ? 'increased' : mult < 0.9 ? 'reduced' : 'baseline'}</span>`;
+}
+
+function updateHexColors() {
+    if (!hexLayer) return;
+    hexLayer.eachLayer(layer => {
+        const h3id = layer.h3id;
+        if (!h3id) return;
+        const sc = isScored && scoreData[h3id] ? scoreData[h3id] : null;
+        const dsi = sc ? sc.dsi_pct : (cellData[h3id] ? cellData[h3id].dsi_pct : 0);
+        const color = dsiColor(dsi);
+        layer.setStyle({ fillColor: color, color: color });
+        const popup = layer.getPopup();
+        if (popup) {
+            popup.setContent(makeTooltip(h3id));
+        }
+    });
+}
+
+// Attach event listeners
+['weather', 'light', 'speed_limit', 'vehicle', 'road'].forEach(id => {
+    document.getElementById(id).addEventListener('change', onControlChange);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+flask
+gunicorn
+pandas
+numpy
+scikit-learn
+lightgbm
+h3
+pyarrow
+psycopg2-binary
+sqlalchemy
+apscheduler
+requests
+pyproj

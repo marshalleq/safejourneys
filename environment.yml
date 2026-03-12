@@ -1,0 +1,24 @@
+name: safe-journeys-poc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pandas
+  - numpy
+  - scikit-learn
+  - lightgbm
+  - xgboost
+  - folium
+  - matplotlib
+  - seaborn
+  - pyproj
+  - scipy
+  - jupyter
+  - ipywidgets
+  - tqdm
+  - branca
+  - pyarrow
+  - pip
+  - pip:
+    - h3
+    - shap
