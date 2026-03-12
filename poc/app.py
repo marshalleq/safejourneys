@@ -1029,7 +1029,7 @@ def route_risk():
         return condition_multiplier(False, False, is_holiday)
 
     # Score the route
-    result = score_route(cells, cell_lookup, cell_mult_fn)
+    result = score_route(cells, cell_lookup, cell_mult_fn, aadt_data=_cell_aadt)
     result["route_coordinates"] = route["coordinates"]
     result["distance_km"] = round(route["distance_m"] / 1000, 1)
     result["duration_min"] = round(route["duration_s"] / 60)

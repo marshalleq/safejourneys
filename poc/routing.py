@@ -74,18 +74,50 @@ def route_to_h3_cells(coordinates, resolution=9):
     return cells_ordered
 
 
-def score_route(route_cells, cell_data, cell_multiplier_fn):
+def _estimate_adt(speed_limit, is_urban):
     """
-    Score a route by computing crash probability across all cells.
+    Estimate ADT for cells without AADT data, based on road characteristics.
+    These are rough NZ averages by road type.
+    """
+    if is_urban:
+        if speed_limit <= 50:
+            return 8000   # urban local/collector
+        elif speed_limit <= 70:
+            return 15000  # urban arterial
+        else:
+            return 25000  # urban motorway
+    else:
+        if speed_limit <= 60:
+            return 1000   # rural local
+        elif speed_limit <= 80:
+            return 3000   # rural collector
+        else:
+            return 5000   # rural state highway
+
+
+def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
+    """
+    Score a route by computing PER-VEHICLE crash probability across all cells.
+
+    The cell's hourly crash rate is the rate for ALL vehicles combined.
+    To get individual risk, we divide by the number of vehicles sharing the road:
+
+        per_vehicle_rate = cell_crash_rate / vehicles_per_hour
+        my_risk = per_vehicle_rate × hours_in_cell
+
+    AADT data is used where available; otherwise estimated from road type.
 
     Args:
         route_cells: list of (h3_index, lat, lng) from route_to_h3_cells
         cell_data: dict h3_index -> row dict with hourly_rate, base_dsi_prob, speed_limit etc.
         cell_multiplier_fn: function(lat, lng) -> condition multiplier
+        aadt_data: dict h3_index -> {adt, ...} or None
 
     Returns dict with route risk summary and per-segment details.
     """
     CELL_DIAMETER_KM = 0.6  # H3 resolution 9
+    if aadt_data is None:
+        aadt_data = {}
 
     segments = []
     total_no_crash_prob = 1.0
@@ -115,14 +147,31 @@ def score_route(route_cells, cell_data, cell_multiplier_fn):
         hourly_rate = (cell.get("hourly_rate", 0) or 0) * mult
         speed_limit = cell.get("mean_speed_limit") or cell.get("speed_limit") or 50
         dsi_prob = cell.get("base_dsi_prob", 0) or 0
+        is_urban = bool(cell.get("cell_pct_urban", 0) and cell.get("cell_pct_urban", 0) > 0.5)
+
+        # Get traffic volume — AADT if available, otherwise estimate
+        aadt_info = aadt_data.get(h3id)
+        if aadt_info and aadt_info.get("adt", 0) > 0:
+            adt = aadt_info["adt"]
+        else:
+            adt = _estimate_adt(speed_limit, is_urban)
+
+        vehicles_per_hour = adt / 24  # simplified; real traffic varies by hour
 
         # Time to traverse this cell
         speed_kmh = max(speed_limit, 10)
         hours_in_cell = CELL_DIAMETER_KM / speed_kmh
         total_time_hours += hours_in_cell
 
-        # Probability of crash in this cell during transit
-        crash_prob = min(hourly_rate * hours_in_cell, 0.999)
+        # Per-VEHICLE crash probability for a single transit through this cell
+        # = 1 / (total vehicles between crashes)
+        # = hourly_rate / vehicles_per_hour
+        # hours_in_cell cancels out: fewer hours exposed, but fewer vehicles present too
+        if vehicles_per_hour > 0 and hourly_rate > 0:
+            crash_prob = min(hourly_rate / vehicles_per_hour, 0.999)
+        else:
+            crash_prob = 0
+
         total_no_crash_prob *= (1 - crash_prob)
         total_dsi_weighted += dsi_prob * crash_prob
 

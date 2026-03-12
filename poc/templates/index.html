@@ -785,6 +785,19 @@ function fetchHotspotAddresses(hotspots, onUpdate) {
 // ---------------------------------------------------------------
 const map = L.map('map', { preferCanvas: true }).setView([-41.3, 174.8], 6);
 
+// Zoom level display
+const zoomDisplay = L.control({ position: 'topleft' });
+zoomDisplay.onAdd = function() {
+    const div = L.DomUtil.create('div', 'zoom-level-display');
+    div.style.cssText = 'background:rgba(0,0,0,0.6);color:#fff;padding:2px 8px;border-radius:0 0 4px 4px;font-size:11px;text-align:center;margin-top:-7px;font-variant-numeric:tabular-nums;';
+    div.textContent = 'z' + map.getZoom();
+    return div;
+};
+zoomDisplay.addTo(map);
+map.on('zoomend', () => {
+    document.querySelector('.zoom-level-display').textContent = 'z' + map.getZoom();
+});
+
 const TILE_DARK = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
 });
