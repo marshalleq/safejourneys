@@ -981,6 +981,62 @@ def score():
     return jsonify({"scores": result, "stats": stats})
 
 
+@app.route("/api/route", methods=["POST"])
+def route_risk():
+    """Score a driving route for crash risk."""
+    params = request.json or {}
+    origin_lat = params.get("origin_lat")
+    origin_lng = params.get("origin_lng")
+    dest_lat = params.get("dest_lat")
+    dest_lng = params.get("dest_lng")
+
+    if not all([origin_lat, origin_lng, dest_lat, dest_lng]):
+        return jsonify({"error": "origin_lat, origin_lng, dest_lat, dest_lng required"}), 400
+
+    from poc.routing import get_route, route_to_h3_cells, score_route
+
+    # Get driving route
+    route = get_route(origin_lng, origin_lat, dest_lng, dest_lat)
+    if "error" in route:
+        return jsonify(route), 400
+
+    # Map route to H3 cells
+    cells = route_to_h3_cells(route["coordinates"])
+
+    # Build cell data lookup from top_cells
+    cell_lookup = {}
+    for _, row in top_cells.iterrows():
+        cell_lookup[row["h3_index"]] = row.to_dict()
+
+    # Per-cell weather multiplier
+    is_holiday = False
+    try:
+        from poc.weather import get_current_holiday_info, get_conditions_per_region, nearest_weather_point
+        holiday_info = get_current_holiday_info()
+        is_holiday = holiday_info.get("is_holiday", False)
+        region_conditions = get_conditions_per_region()
+    except Exception:
+        region_conditions = {}
+
+    def cell_mult_fn(lat, lng):
+        try:
+            region_name, _ = nearest_weather_point(lat, lng)
+            rc = region_conditions.get(region_name)
+            if rc:
+                return condition_multiplier(rc["is_rain"], rc["is_dark"], is_holiday)
+        except Exception:
+            pass
+        return condition_multiplier(False, False, is_holiday)
+
+    # Score the route
+    result = score_route(cells, cell_lookup, cell_mult_fn)
+    result["route_coordinates"] = route["coordinates"]
+    result["distance_km"] = round(route["distance_m"] / 1000, 1)
+    result["duration_min"] = round(route["duration_s"] / 60)
+
+    return jsonify(result)
+
+
 @app.route("/api/weather")
 def weather_endpoint():
     """Return current weather conditions + 24hr forecast + holiday info.

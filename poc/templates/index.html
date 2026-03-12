@@ -435,6 +435,65 @@ body.light-mode .data-table-wrap th { background: #fff; }
 body.light-mode .data-table-wrap tr:hover td { background: rgba(0,0,0,0.03); }
 .data-table-wrap .total-row td { font-weight: 700; border-top: 2px solid #e74c3c; }
 
+/* Route planner */
+.route-panel {
+    padding: 14px 20px; background: #0d1b3e;
+    border-top: 1px solid #333;
+}
+.route-panel h3 {
+    font-size: 11px; color: #888; text-transform: uppercase;
+    margin-bottom: 8px; letter-spacing: 1px; cursor: pointer;
+}
+.route-panel h3:hover { color: #ccc; }
+.route-inputs { display: none; }
+.route-inputs.active { display: block; }
+.route-input-group {
+    display: flex; gap: 6px; margin-bottom: 6px; align-items: center;
+}
+.route-input-group label {
+    font-size: 11px; color: #888; width: 36px; flex-shrink: 0;
+    text-transform: none; letter-spacing: 0;
+}
+.route-input-group input {
+    flex: 1; padding: 6px 10px; border-radius: 4px;
+    border: 1px solid #333; background: #16213e; color: #eee;
+    font-size: 13px;
+}
+.route-input-group input:focus { outline: none; border-color: #3498db; }
+body.light-mode .route-input-group input {
+    background: #fff; color: #333; border-color: #ccc;
+}
+.route-btn {
+    width: 100%; padding: 8px; border: none; border-radius: 4px;
+    background: #e74c3c; color: #fff; font-size: 12px; font-weight: 700;
+    cursor: pointer; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.route-btn:hover { background: #c0392b; }
+.route-btn:disabled { background: #555; cursor: not-allowed; }
+.route-btn.clear { background: #555; margin-top: 6px; }
+.route-btn.clear:hover { background: #666; }
+.route-results {
+    margin-top: 10px; font-size: 12px; display: none;
+}
+.route-results.active { display: block; }
+.route-stat {
+    display: flex; justify-content: space-between; padding: 3px 0;
+}
+.route-stat .route-val { font-weight: 700; }
+.route-stat .route-val.danger { color: #e74c3c; }
+.route-stat .route-val.warning { color: #f39c12; }
+.route-stat .route-val.safe { color: #2ecc71; }
+.route-risk-summary {
+    background: rgba(231,76,60,0.1); border-left: 3px solid #e74c3c;
+    padding: 8px 12px; border-radius: 4px; margin-top: 8px;
+}
+.route-risk-summary.low { border-left-color: #2ecc71; background: rgba(46,204,113,0.1); }
+.route-risk-summary.moderate { border-left-color: #f39c12; background: rgba(243,156,18,0.1); }
+body.light-mode .route-panel { background: #f0f4ff; border-top-color: #ddd; }
+body.light-mode .route-panel h3 { color: #888; }
+body.light-mode .route-results { color: #333; }
+body.light-mode .route-stat { color: #333; }
+
 </style>
 </head>
 <body>
@@ -527,6 +586,24 @@ body.light-mode .data-table-wrap tr:hover td { background: rgba(0,0,0,0.03); }
                 <option value="hill">Hill Road</option>
                 <option value="straight">Straight / Flat</option>
             </select>
+        </div>
+    </div>
+
+    <!-- Route planner -->
+    <div class="route-panel">
+        <h3 onclick="document.getElementById('route-inputs').classList.toggle('active')">&#9654; Route Risk Calculator</h3>
+        <div class="route-inputs" id="route-inputs">
+            <div class="route-input-group">
+                <label>From</label>
+                <input type="text" id="route-origin" placeholder="e.g. Auckland CBD" autocomplete="off">
+            </div>
+            <div class="route-input-group">
+                <label>To</label>
+                <input type="text" id="route-dest" placeholder="e.g. Wellington" autocomplete="off">
+            </div>
+            <button class="route-btn" id="route-calc-btn" onclick="calculateRoute()">Calculate Route Risk</button>
+            <button class="route-btn clear" id="route-clear-btn" onclick="clearRoute()" style="display:none;">Clear Route</button>
+            <div class="route-results" id="route-results"></div>
         </div>
     </div>
 
@@ -1284,6 +1361,191 @@ function updateHexColors() {
             popup.setContent(makeTooltip(h3id));
         }
     });
+}
+
+// ---------------------------------------------------------------
+// Route risk calculator
+// ---------------------------------------------------------------
+let routeLayer = null;
+let routeSegmentLayer = null;
+
+async function geocodePlace(query) {
+    const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ', New Zealand')}&format=json&limit=1`, {
+        headers: { 'User-Agent': 'SafeJourneys/1.0' }
+    });
+    const data = await resp.json();
+    if (!data.length) return null;
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), name: data[0].display_name.split(',')[0] };
+}
+
+async function calculateRoute() {
+    const originText = document.getElementById('route-origin').value.trim();
+    const destText = document.getElementById('route-dest').value.trim();
+    if (!originText || !destText) return;
+
+    const btn = document.getElementById('route-calc-btn');
+    const results = document.getElementById('route-results');
+    btn.disabled = true;
+    btn.textContent = 'Calculating...';
+    results.innerHTML = '<div style="color:#888;">Geocoding locations...</div>';
+    results.classList.add('active');
+
+    try {
+        // Geocode origin and destination
+        const origin = await geocodePlace(originText);
+        const dest = await geocodePlace(destText);
+
+        if (!origin) { results.innerHTML = `<div style="color:#e74c3c;">Could not find "${originText}"</div>`; return; }
+        if (!dest) { results.innerHTML = `<div style="color:#e74c3c;">Could not find "${destText}"</div>`; return; }
+
+        results.innerHTML = `<div style="color:#888;">Computing route from ${origin.name} to ${dest.name}...</div>`;
+
+        // Call route API
+        const resp = await fetch('/api/route', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                origin_lat: origin.lat, origin_lng: origin.lng,
+                dest_lat: dest.lat, dest_lng: dest.lng,
+            }),
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            results.innerHTML = `<div style="color:#e74c3c;">${data.error}</div>`;
+            return;
+        }
+
+        // Draw route on map
+        drawRoute(data);
+
+        // Show results
+        renderRouteResults(data, origin.name, dest.name);
+
+        document.getElementById('route-clear-btn').style.display = 'block';
+
+    } catch (e) {
+        results.innerHTML = `<div style="color:#e74c3c;">Error: ${e.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Calculate Route Risk';
+    }
+}
+
+function drawRoute(data) {
+    clearRouteFromMap();
+
+    if (!data.route_coordinates || !data.segments) return;
+
+    // Draw the full route as a thin background line
+    const routeCoords = data.route_coordinates.map(c => [c[1], c[0]]);
+    routeLayer = L.polyline(routeCoords, {
+        color: '#3498db', weight: 4, opacity: 0.4, dashArray: '8,6',
+    }).addTo(map);
+
+    // Draw segments colour-coded by risk
+    routeSegmentLayer = L.layerGroup().addTo(map);
+    const segsWithData = data.segments.filter(s => s.has_data);
+    if (segsWithData.length > 1) {
+        for (let i = 0; i < segsWithData.length - 1; i++) {
+            const s1 = segsWithData[i];
+            const s2 = segsWithData[i + 1];
+            const prob = s1.crash_prob;
+            let color = '#2ecc71';
+            if (prob > 0.0001) color = '#f1c40f';
+            if (prob > 0.0005) color = '#f39c12';
+            if (prob > 0.001) color = '#e67e22';
+            if (prob > 0.005) color = '#e74c3c';
+            const line = L.polyline([[s1.lat, s1.lng], [s2.lat, s2.lng]], {
+                color: color, weight: 6, opacity: 0.85,
+            });
+            routeSegmentLayer.addLayer(line);
+        }
+    }
+
+    // Zoom to route
+    map.fitBounds(routeLayer.getBounds(), { padding: [50, 50] });
+
+    // Mark highest risk segment
+    if (data.highest_risk_segment) {
+        const hs = data.highest_risk_segment;
+        const marker = L.circleMarker([hs.lat, hs.lng], {
+            radius: 10, color: '#e74c3c', fillColor: '#e74c3c', fillOpacity: 0.8, weight: 2,
+        }).addTo(routeSegmentLayer);
+        marker.bindPopup(`<div>
+            <div style="font-size:11px;color:#888;margin-bottom:4px;">HIGHEST RISK SEGMENT</div>
+            <div><span class="tt-label">DSI Risk:</span> <span class="tt-value tt-high">${hs.dsi_pct}%</span></div>
+            <div><span class="tt-label">Speed Limit:</span> <span class="tt-value">${hs.speed_limit} km/h</span></div>
+            <div><span class="tt-label">Condition Multiplier:</span> <span class="tt-value">${hs.multiplier}x</span></div>
+        </div>`, { className: 'popup-custom', maxWidth: 300 });
+    }
+}
+
+function clearRouteFromMap() {
+    if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+    if (routeSegmentLayer) { map.removeLayer(routeSegmentLayer); routeSegmentLayer = null; }
+}
+
+function clearRoute() {
+    clearRouteFromMap();
+    document.getElementById('route-results').classList.remove('active');
+    document.getElementById('route-results').innerHTML = '';
+    document.getElementById('route-clear-btn').style.display = 'none';
+}
+
+function renderRouteResults(data, originName, destName) {
+    const results = document.getElementById('route-results');
+
+    const probPct = data.route_crash_probability;
+    let riskCls = 'safe';
+    let riskLabel = 'Low risk';
+    if (probPct >= 0.1) { riskCls = 'danger'; riskLabel = 'Elevated risk'; }
+    else if (probPct >= 0.01) { riskCls = 'warning'; riskLabel = 'Moderate risk'; }
+
+    const dsiCls = data.route_dsi_pct >= 15 ? 'danger' : data.route_dsi_pct >= 8 ? 'warning' : 'safe';
+
+    const hrs = Math.floor(data.duration_min / 60);
+    const mins = data.duration_min % 60;
+    const durationStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+
+    let summaryClass = 'route-risk-summary';
+    if (probPct < 0.01) summaryClass += ' low';
+    else if (probPct < 0.1) summaryClass += ' moderate';
+
+    const hsInfo = data.highest_risk_segment
+        ? `<div style="font-size:11px;color:#ccc;margin-top:6px;">Highest risk near cell at ${data.highest_risk_segment.lat}, ${data.highest_risk_segment.lng} (${data.highest_risk_segment.dsi_pct}% DSI, ${data.highest_risk_segment.speed_limit}km/h)</div>`
+        : '';
+
+    results.innerHTML = `
+        <div class="${summaryClass}">
+            <div style="font-weight:700;font-size:13px;margin-bottom:4px;">${riskLabel}</div>
+            <div style="font-size:20px;font-weight:700;color:inherit;">${data.route_crash_pct}</div>
+            <div style="font-size:11px;color:#888;">chance of a crash on this trip (1 in ${data.one_in_n_trips.toLocaleString()} trips)</div>
+        </div>
+        <div style="margin-top:8px;">
+            <div class="route-stat">
+                <span>${originName} → ${destName}</span>
+            </div>
+            <div class="route-stat">
+                <span>Distance</span>
+                <span class="route-val">${data.distance_km} km</span>
+            </div>
+            <div class="route-stat">
+                <span>Drive Time</span>
+                <span class="route-val">${durationStr}</span>
+            </div>
+            <div class="route-stat">
+                <span>Cells Traversed</span>
+                <span class="route-val">${data.cells_with_data} scored / ${data.total_cells} total</span>
+            </div>
+            <div class="route-stat">
+                <span>DSI if Crash</span>
+                <span class="route-val ${dsiCls}">${data.route_dsi_pct}%</span>
+            </div>
+        </div>
+        ${hsInfo}
+    `;
+    results.classList.add('active');
 }
 
 // ---------------------------------------------------------------

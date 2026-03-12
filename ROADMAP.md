@@ -181,24 +181,60 @@ Start with option 2 (LightGBM Poisson) — it reuses your existing toolchain and
 
 ---
 
+## Phase 8: Route Risk Scoring
+
+**Effort:** Medium | **Impact:** High | **Data:** Free routing API + existing cell data
+
+Enter an origin and destination to compute the probability of a crash along a driving route, using current conditions.
+
+### How it works
+
+1. User enters origin and destination (text inputs with geocoding)
+2. A routing API (OpenRouteService) computes the driving route as a polyline
+3. The polyline is intersected with H3 cells to find which cells the route passes through
+4. For each cell: `P(crash in cell) = hourly_crash_rate × condition_multiplier × hours_in_cell`
+   - `hours_in_cell ≈ cell_diameter / speed_limit`
+5. Route crash probability = `1 - product(1 - P_i)` across all cells
+6. Route DSI risk = weighted average severity across cells
+7. Highest-risk segments identified and highlighted on the map
+
+### Deliverables
+
+- [ ] Integrate routing API (OpenRouteService — free tier, 2000 req/day)
+- [ ] Route-to-H3 cell intersection logic
+- [ ] Per-cell transit time estimation from speed limits
+- [ ] Probability aggregation across route cells
+- [ ] `/api/route` endpoint accepting origin/destination coordinates
+- [ ] Sidebar UI: origin/destination text inputs with Nominatim autocomplete
+- [ ] Route drawn on map, colour-coded by per-segment risk
+- [ ] Summary panel: trip duration, cells traversed, crash probability, DSI risk, highest-risk segment
+- [ ] Highlight highest-risk segments with explanations
+
+### What this enables
+
+"Auckland to Wellington via SH1: 8hr drive, passes through 412 cells, **0.12% crash probability** this trip (1 in 830). Highest risk: Taupo–Turangi corridor (rain + 100km/h + holiday weekend). DSI if crash: 9.2%."
+
+---
+
 ## Summary
 
 | Phase | Enhancement | Effort | Impact | Data | Status |
 |-------|------------|--------|--------|------|--------|
 | 1 | Hour/day-of-week temporal patterns | Low | Medium | Already have | BLOCKED — CAS API has no time-of-day data |
-| 2 | Live weather integration | Low | Medium | Free API | DONE — Open-Meteo + sun position |
+| 2 | Live weather integration | Low | Medium | Free API | DONE — Open-Meteo + per-cell weather |
 | 3 | AADT traffic volumes | Medium | High | NZTA open data | DONE — Carriageway API, exposure rates |
 | 4 | Calendar / events / holidays | Low | Low–Medium | Public | DONE — NZ holidays + period multipliers |
 | 5 | Real-time traffic | Medium | High | Paid API | Planned |
 | 6 | Model architecture evolution | High | High | Phases 1–3 | Planned |
 | 7 | Road network change detection | High | Medium | NZTA | Planned |
+| 8 | Route risk scoring | Medium | High | Free routing API | In progress |
 
 ### Completed
 
-- **Phase 2**: Open-Meteo weather API with 8 NZ sampling points, 24hr forecast strip, sun position for light detection, 10-minute auto-refresh
+- **Phase 2**: Open-Meteo weather API with 8 NZ sampling points, per-cell weather multipliers, 24hr forecast strip, sun position for light detection, 10-minute auto-refresh
 - **Phase 3**: NZTA Carriageway AADT data (10,834 road segments), mapped to H3 cells, exposure-adjusted crash rates (per 100M vehicle-km), background loading
 - **Phase 4**: Full NZ public holiday calendar (including Mondayisation, Easter, Matariki), holiday period detection, crash rate multiplier during holiday periods, next-holiday countdown
 
 ---
 
-*Last updated: 2026-03-12*
+*Last updated: 2026-03-13*
