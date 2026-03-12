@@ -1,12 +1,14 @@
 #!/bin/bash
 set -e
 
+export PYTHONUNBUFFERED=1
+
 echo "=== Safe Journeys — Starting up ==="
 
 # Wait for database to be ready
 echo "Waiting for database..."
 for i in $(seq 1 30); do
-    python -c "
+    python -u -c "
 from poc.db.connection import get_engine
 engine = get_engine()
 with engine.connect() as conn:
@@ -21,7 +23,7 @@ done
 python -c "from poc.db.connection import init_db; init_db()"
 
 # Seed database if empty
-python -c "
+python -u -c "
 from poc.db.connection import table_row_count
 try:
     count = table_row_count('crash_records')
