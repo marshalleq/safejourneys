@@ -1033,12 +1033,27 @@ def route_risk():
         return condition_multiplier(False, False, is_holiday)
 
     # Score the route
-    result = score_route(cells, _all_cell_lookup, cell_mult_fn, aadt_data=_cell_aadt)
+    try:
+        result = score_route(cells, _all_cell_lookup, cell_mult_fn, aadt_data=_cell_aadt)
+    except Exception as e:
+        return jsonify({"error": f"Scoring failed: {e}"}), 500
+
     result["route_coordinates"] = route["coordinates"]
     result["distance_km"] = round(route["distance_m"] / 1000, 1)
     result["duration_min"] = round(route["duration_s"] / 60)
 
-    return jsonify(result)
+    # Sanitise for JSON (NaN/Infinity from pandas breaks jsonify)
+    import math as _m
+    def _sanitise(obj):
+        if isinstance(obj, float) and (_m.isnan(obj) or _m.isinf(obj)):
+            return 0
+        if isinstance(obj, dict):
+            return {k: _sanitise(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitise(v) for v in obj]
+        return obj
+
+    return jsonify(_sanitise(result))
 
 
 @app.route("/api/weather")
