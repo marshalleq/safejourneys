@@ -698,20 +698,52 @@ def score():
     overrides = {}
 
     weather = params.get("weather", "any")
-    is_rain = weather == "rain"
-    if weather == "rain":
+    light = params.get("light", "any")
+
+    # Auto-detect from live weather data
+    live_conditions = None
+    if weather == "auto" or light == "auto":
+        try:
+            from poc.weather import get_current_conditions
+            live_conditions = get_current_conditions()
+        except Exception:
+            live_conditions = None
+
+    if weather == "auto" and live_conditions:
+        is_rain = live_conditions["is_rain"]
+        if is_rain:
+            overrides.update({"isRain": 1, "isPoorVisibility": 1 if live_conditions.get("poor_visibility") else 0, "isFine": 0, "weatherCode": 1})
+        else:
+            overrides.update({"isRain": 0, "isPoorVisibility": 0, "isFine": 1, "weatherCode": 0})
+    elif weather == "rain":
+        is_rain = True
         overrides.update({"isRain": 1, "isPoorVisibility": 1, "isFine": 0, "weatherCode": 1})
     elif weather == "fine":
+        is_rain = False
         overrides.update({"isRain": 0, "isPoorVisibility": 0, "isFine": 1, "weatherCode": 0})
+    else:
+        is_rain = False
 
-    light = params.get("light", "any")
-    is_dark = light == "dark"
-    if light == "dark":
+    if light == "auto" and live_conditions:
+        detected_light = live_conditions["light"]
+        is_dark = detected_light == "dark"
+        if detected_light == "dark":
+            overrides.update({"isDark": 1, "isTwilight": 0, "lightCode": 3})
+        elif detected_light == "twilight":
+            overrides.update({"isDark": 0, "isTwilight": 1, "lightCode": 2})
+        else:
+            overrides.update({"isDark": 0, "isTwilight": 0, "lightCode": 0})
+    elif light == "dark":
+        is_dark = True
         overrides.update({"isDark": 1, "isTwilight": 0, "lightCode": 3})
     elif light == "twilight":
+        is_dark = False
         overrides.update({"isDark": 0, "isTwilight": 1, "lightCode": 2})
     elif light == "day":
+        is_dark = False
         overrides.update({"isDark": 0, "isTwilight": 0, "lightCode": 0})
+    else:
+        is_dark = False
 
     speed = params.get("speed_limit")
     if speed and speed != "any":
@@ -823,7 +855,33 @@ def score():
         "hotspots": hotspots,
     }
 
+    # Include live conditions in response if auto-detected
+    if live_conditions:
+        from poc.weather import get_risk_description
+        stats["live_weather"] = {
+            "weather_description": live_conditions.get("weather_description", ""),
+            "light": live_conditions.get("light", ""),
+            "rain_mm": live_conditions.get("rain_mm", 0),
+            "temp_c": live_conditions.get("temp_c"),
+            "wind_kmh": live_conditions.get("wind_kmh"),
+            "ice_risk": live_conditions.get("ice_risk", False),
+            "high_wind": live_conditions.get("high_wind", False),
+            "risk_descriptions": get_risk_description(live_conditions),
+        }
+
     return jsonify({"scores": result, "stats": stats})
+
+
+@app.route("/api/weather")
+def weather_endpoint():
+    """Return current NZ weather conditions + 24hr forecast."""
+    try:
+        from poc.weather import get_current_conditions, get_risk_description
+        conditions = get_current_conditions()
+        conditions["risk_descriptions"] = get_risk_description(conditions)
+        return jsonify(conditions)
+    except Exception as e:
+        return jsonify({"error": str(e), "weather_description": "Unavailable"}), 500
 
 
 @app.route("/api/geocode")
@@ -883,8 +941,26 @@ if USE_DB:
 
         refresh_hours = int(os.environ.get("REFRESH_INTERVAL_HOURS", "4"))
         scheduler = BackgroundScheduler()
+        from datetime import datetime, timedelta
+
+        # Check if a refresh ran recently (within the interval window)
+        run_now = None  # default: wait for first interval
+        try:
+            from sqlalchemy import text
+            with _db_engine.connect() as conn:
+                row = conn.execute(text(
+                    "SELECT finished_at FROM data_refresh_log "
+                    "WHERE status = 'success' ORDER BY finished_at DESC LIMIT 1"
+                )).fetchone()
+                if row is None or row[0] is None:
+                    run_now = datetime.utcnow()  # never refreshed — run now
+                elif (datetime.utcnow() - row[0]).total_seconds() > refresh_hours * 3600:
+                    run_now = datetime.utcnow()  # last refresh too long ago — run now
+        except Exception:
+            run_now = datetime.utcnow()  # can't check — run now to be safe
+
         scheduler.add_job(scheduled_refresh, "interval", hours=refresh_hours,
-                          next_run_time=None)  # Don't run immediately on startup
+                          next_run_time=run_now)
         scheduler.start()
         print(f"Scheduled data refresh every {refresh_hours} hours.")
     except ImportError:

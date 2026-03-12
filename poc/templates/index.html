@@ -84,6 +84,44 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .condition-badge.warning { background: rgba(243,156,18,0.2); color: #f39c12; }
 .condition-badge.safe { background: rgba(46,204,113,0.2); color: #2ecc71; }
 
+/* Live weather banner */
+.weather-banner {
+    padding: 10px 20px; background: #0d1b3e;
+    border-top: 1px solid #333; border-bottom: 1px solid #333;
+}
+.weather-banner h3 {
+    font-size: 11px; color: #888; text-transform: uppercase;
+    margin-bottom: 6px; letter-spacing: 1px;
+}
+.weather-status {
+    font-size: 13px; color: #ddd; margin-bottom: 4px;
+}
+.weather-status .weather-icon { margin-right: 6px; }
+.weather-risks {
+    list-style: none; padding: 0; margin: 4px 0 0 0;
+}
+.weather-risks li {
+    font-size: 11px; padding: 3px 0; color: #ccc;
+    border-left: 3px solid #f39c12; padding-left: 8px; margin-bottom: 3px;
+}
+.weather-risks li.good { border-left-color: #2ecc71; }
+.weather-forecast-strip {
+    display: flex; gap: 2px; margin-top: 8px; height: 24px; border-radius: 4px; overflow: hidden;
+}
+.weather-forecast-strip .fc-bar {
+    flex: 1; min-width: 0; position: relative; background: #2ecc71;
+    transition: background 0.3s;
+}
+.weather-forecast-strip .fc-bar.rain-light { background: #3498db; }
+.weather-forecast-strip .fc-bar.rain-mod { background: #2980b9; }
+.weather-forecast-strip .fc-bar.rain-heavy { background: #1a5276; }
+.fc-bar-tooltip {
+    display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    background: #16213e; color: #eee; font-size: 10px; padding: 4px 6px;
+    border-radius: 3px; white-space: nowrap; z-index: 10;
+}
+.fc-bar:hover .fc-bar-tooltip { display: block; }
+
 /* Hotspots panel */
 .hotspots-panel {
     padding: 14px 20px; background: #0f3460;
@@ -285,6 +323,12 @@ body.light-mode .layer-toggles {
 }
 body.light-mode .layer-toggles h4 { color: #999; }
 body.light-mode .layer-toggle { color: #333; }
+body.light-mode .weather-banner {
+    background: #f0f4ff; border-top-color: #ddd; border-bottom-color: #ddd;
+}
+body.light-mode .weather-banner h3 { color: #888; }
+body.light-mode .weather-status { color: #333; }
+body.light-mode .weather-risks li { color: #444; }
 body.light-mode .stats-panel {
     background: #fff; border-top-color: #ddd; color: #222;
 }
@@ -364,6 +408,7 @@ body.light-mode .tt-divider { border-top-color: #ddd; }
         <div class="control-group">
             <label>Weather Conditions</label>
             <select id="weather">
+                <option value="auto">Live (auto-detect)</option>
                 <option value="any">Any (as recorded)</option>
                 <option value="fine">Fine / Clear</option>
                 <option value="rain">Rain / Wet</option>
@@ -373,6 +418,7 @@ body.light-mode .tt-divider { border-top-color: #ddd; }
         <div class="control-group">
             <label>Light / Time of Day</label>
             <select id="light">
+                <option value="auto">Live (auto-detect)</option>
                 <option value="any">Any (as recorded)</option>
                 <option value="day">Daylight</option>
                 <option value="twilight">Twilight / Dawn / Dusk</option>
@@ -415,6 +461,14 @@ body.light-mode .tt-divider { border-top-color: #ddd; }
                 <option value="straight">Straight / Flat</option>
             </select>
         </div>
+    </div>
+
+    <!-- Live weather banner -->
+    <div class="weather-banner" id="weather-banner" style="display:none;">
+        <h3>Live Conditions</h3>
+        <div class="weather-status" id="weather-status">Loading weather...</div>
+        <ul class="weather-risks" id="weather-risks"></ul>
+        <div class="weather-forecast-strip" id="weather-forecast" title="24-hour rain forecast"></div>
     </div>
 
     <!-- Severity stats -->
@@ -1071,7 +1125,9 @@ function doScore() {
         road: document.getElementById('road').value,
     };
 
-    if (Object.values(params).every(v => v === 'any')) {
+    // "auto" triggers live scoring; only skip scoring if everything is truly "any"
+    const isAllDefault = Object.values(params).every(v => v === 'any');
+    if (isAllDefault) {
         isScored = false;
         scoreData = {};
         updateHexColors();
@@ -1113,6 +1169,11 @@ function doScore() {
                 renderHotspots(data.stats.hotspots);
                 buildHotspotMarkers(data.stats.hotspots);
             }
+
+            // Update live weather banner if auto-detected conditions returned
+            if (data.stats.live_weather) {
+                updateWeatherBanner(data.stats.live_weather);
+            }
         }
 
         document.getElementById('loading').classList.remove('active');
@@ -1147,6 +1208,84 @@ function updateHexColors() {
         }
     });
 }
+
+// ---------------------------------------------------------------
+// Live weather display
+// ---------------------------------------------------------------
+function updateWeatherBanner(liveWeather) {
+    const banner = document.getElementById('weather-banner');
+    if (!liveWeather) { banner.style.display = 'none'; return; }
+    banner.style.display = 'block';
+
+    // Status line
+    const statusEl = document.getElementById('weather-status');
+    const lightIcon = liveWeather.light === 'dark' ? '&#9790;' : liveWeather.light === 'twilight' ? '&#9788;' : '&#9728;';
+    const tempStr = liveWeather.temp_c != null ? ` | ${liveWeather.temp_c}°C` : '';
+    const windStr = liveWeather.wind_kmh != null ? ` | Wind ${liveWeather.wind_kmh}km/h` : '';
+    statusEl.innerHTML = `<span class="weather-icon">${lightIcon}</span>${liveWeather.weather_description}${tempStr}${windStr}`;
+
+    // Risk descriptions
+    const risksEl = document.getElementById('weather-risks');
+    risksEl.innerHTML = '';
+    if (liveWeather.risk_descriptions) {
+        liveWeather.risk_descriptions.forEach(desc => {
+            const li = document.createElement('li');
+            li.textContent = desc;
+            if (desc.includes('favourable')) li.className = 'good';
+            risksEl.appendChild(li);
+        });
+    }
+}
+
+function renderForecastStrip(forecast) {
+    const strip = document.getElementById('weather-forecast');
+    strip.innerHTML = '';
+    if (!forecast || !forecast.length) return;
+    forecast.forEach(hr => {
+        const bar = document.createElement('div');
+        bar.className = 'fc-bar';
+        const rain = hr.rain_mm || 0;
+        if (rain >= 5) bar.classList.add('rain-heavy');
+        else if (rain >= 1) bar.classList.add('rain-mod');
+        else if (rain > 0) bar.classList.add('rain-light');
+        // Tooltip
+        const time = hr.time ? hr.time.split('T')[1] || '' : '';
+        const tip = document.createElement('span');
+        tip.className = 'fc-bar-tooltip';
+        tip.textContent = `${time} — ${rain}mm${hr.rain_prob ? ' (' + hr.rain_prob + '%)' : ''}`;
+        bar.appendChild(tip);
+        strip.appendChild(bar);
+    });
+}
+
+function fetchWeatherBanner() {
+    fetch('/api/weather')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.error) {
+                updateWeatherBanner(data);
+                renderForecastStrip(data.forecast);
+            }
+        })
+        .catch(() => {});
+}
+
+// ---------------------------------------------------------------
+// Auto-score on load + periodic refresh
+// ---------------------------------------------------------------
+
+// Fetch standalone weather banner (for forecast strip) then trigger live score
+fetchWeatherBanner();
+setTimeout(() => doScore(), 500);
+
+// Refresh weather + re-score every 10 minutes
+setInterval(() => {
+    const w = document.getElementById('weather').value;
+    const l = document.getElementById('light').value;
+    if (w === 'auto' || l === 'auto') {
+        doScore();
+    }
+}, 10 * 60 * 1000);
 
 // Attach event listeners
 ['weather', 'light', 'speed_limit', 'vehicle', 'road'].forEach(id => {
