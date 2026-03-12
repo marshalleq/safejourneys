@@ -864,6 +864,8 @@ function buildHotspotMarkers(hotspotList) {
                     <div><span class="tt-label">Last recorded crash:</span> <span class="tt-value">${h.last_crash_year || 'Unknown'}</span></div>
                     ${h.main_road ? `<div><span class="tt-label">Main road:</span> <span class="tt-value">${h.main_road}</span></div>` : ''}
                     <div><span class="tt-label">Speed Limit:</span> <span class="tt-value">${h.speed_limit} km/h</span></div>
+                    ${h.adt ? `<div><span class="tt-label">Traffic Volume:</span> <span class="tt-value">${h.adt.toLocaleString()} vehicles/day</span>
+                        ${h.pct_heavy ? `<span class="tt-label" style="margin-left:6px">(${h.pct_heavy}% heavy)</span>` : ''}</div>` : ''}
                     ${riskFHtml}
                     ${mitsHtml}
                 </div>
@@ -969,6 +971,10 @@ function makeTooltip(h3id) {
                  <span class="tt-label" style="margin-left:8px">Serious:</span> <span class="tt-value tt-elevated">${props.serious}</span></div>
             <div><span class="tt-label">Annual Rate:</span> <span class="tt-value">${props.annual_rate}/yr</span></div>
             <div><span class="tt-label">Speed Limit:</span> <span class="tt-value">${props.speed_limit} km/h</span></div>
+            ${props.adt ? `<div><span class="tt-label">Traffic Volume:</span> <span class="tt-value">${props.adt.toLocaleString()} vehicles/day</span>
+                ${props.pct_heavy ? `<span class="tt-label" style="margin-left:6px">(${props.pct_heavy}% heavy)</span>` : ''}</div>` : ''}
+            ${props.crash_rate_per_100m_vkm ? `<div><span class="tt-label">Crash Rate:</span> <span class="tt-value ${props.exposure_risk === 'extreme' || props.exposure_risk === 'high' ? 'tt-high' : props.exposure_risk === 'elevated' ? 'tt-elevated' : ''}">${props.crash_rate_per_100m_vkm} per 100M veh-km</span>
+                <span class="tt-label" style="margin-left:4px">(${props.exposure_risk})</span></div>` : ''}
             ${riskFactorsHtml}
             ${mitigationsHtml}
         </div>
@@ -1224,6 +1230,15 @@ function updateWeatherBanner(liveWeather) {
     const windStr = liveWeather.wind_kmh != null ? ` | Wind ${liveWeather.wind_kmh}km/h` : '';
     statusEl.innerHTML = `<span class="weather-icon">${lightIcon}</span>${liveWeather.weather_description}${tempStr}${windStr}`;
 
+    // Holiday info
+    const holiday = liveWeather.holiday;
+    if (holiday && holiday.is_holiday) {
+        const hName = holiday.period_name || holiday.holiday_name || 'Holiday period';
+        statusEl.innerHTML += ` | <strong>${hName}</strong>`;
+    } else if (holiday && holiday.next_holiday && holiday.next_holiday.days_until <= 7) {
+        statusEl.innerHTML += ` | ${holiday.next_holiday.name} in ${holiday.next_holiday.days_until}d`;
+    }
+
     // Risk descriptions
     const risksEl = document.getElementById('weather-risks');
     risksEl.innerHTML = '';
@@ -1248,11 +1263,15 @@ function renderForecastStrip(forecast) {
         if (rain >= 5) bar.classList.add('rain-heavy');
         else if (rain >= 1) bar.classList.add('rain-mod');
         else if (rain > 0) bar.classList.add('rain-light');
-        // Tooltip
+        // Tooltip with colour explanation
         const time = hr.time ? hr.time.split('T')[1] || '' : '';
+        let desc = 'Dry';
+        if (rain >= 5) desc = 'Heavy rain';
+        else if (rain >= 1) desc = 'Moderate rain';
+        else if (rain > 0) desc = 'Light rain';
         const tip = document.createElement('span');
         tip.className = 'fc-bar-tooltip';
-        tip.textContent = `${time} — ${rain}mm${hr.rain_prob ? ' (' + hr.rain_prob + '%)' : ''}`;
+        tip.textContent = `${time} — ${desc} (${rain}mm)${hr.rain_prob ? ' ' + hr.rain_prob + '% chance' : ''}`;
         bar.appendChild(tip);
         strip.appendChild(bar);
     });

@@ -183,19 +183,21 @@ Start with option 2 (LightGBM Poisson) — it reuses your existing toolchain and
 
 ## Summary
 
-| Phase | Enhancement | Effort | Impact | Data |
-|-------|------------|--------|--------|------|
-| 1 | Hour/day-of-week temporal patterns | Low | Medium | Already have |
-| 2 | Live weather integration | Low | Medium | Free API |
-| 3 | AADT traffic volumes | Medium | High | NZTA open data |
-| 4 | Calendar / events / holidays | Low | Low–Medium | Public |
-| 5 | Real-time traffic | Medium | High | Paid API |
-| 6 | Model architecture evolution | High | High | Phases 1–3 |
-| 7 | Road network change detection | High | Medium | NZTA |
+| Phase | Enhancement | Effort | Impact | Data | Status |
+|-------|------------|--------|--------|------|--------|
+| 1 | Hour/day-of-week temporal patterns | Low | Medium | Already have | BLOCKED — CAS API has no time-of-day data |
+| 2 | Live weather integration | Low | Medium | Free API | DONE — Open-Meteo + sun position |
+| 3 | AADT traffic volumes | Medium | High | NZTA open data | DONE — Carriageway API, exposure rates |
+| 4 | Calendar / events / holidays | Low | Low–Medium | Public | DONE — NZ holidays + period multipliers |
+| 5 | Real-time traffic | Medium | High | Paid API | Planned |
+| 6 | Model architecture evolution | High | High | Phases 1–3 | Planned |
+| 7 | Road network change detection | High | Medium | NZTA | Planned |
 
-### Quick wins (achievable now)
+### Completed
 
-Phases 1 and 2 can be implemented with data already available or freely accessible. They move the system from "static risk map" to "dynamic risk forecast" without requiring paid APIs or model retraining.
+- **Phase 2**: Open-Meteo weather API with 8 NZ sampling points, 24hr forecast strip, sun position for light detection, 10-minute auto-refresh
+- **Phase 3**: NZTA Carriageway AADT data (10,834 road segments), mapped to H3 cells, exposure-adjusted crash rates (per 100M vehicle-km), background loading
+- **Phase 4**: Full NZ public holiday calendar (including Mondayisation, Easter, Matariki), holiday period detection, crash rate multiplier during holiday periods, next-holiday countdown
 
 ---
 

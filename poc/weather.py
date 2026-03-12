@@ -1,13 +1,15 @@
 """
-Live weather integration via Open-Meteo API (free, no key required).
+Live weather + calendar integration.
 
-Provides current conditions + 24-hour forecast for NZ locations,
-plus astronomical sun position calculations for light conditions.
+Provides:
+- Current conditions + 24-hour forecast via Open-Meteo API (free, no key)
+- Astronomical sun position for light conditions
+- NZ public holiday and holiday period detection
 """
 import math
 import time
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 
 import requests
 
@@ -309,6 +311,14 @@ def get_risk_description(conditions):
     elif conditions.get("light") == "twilight":
         risks.append("Twilight — transitional lighting, glare risk")
 
+    # Holiday risk
+    holiday = conditions.get("holiday")
+    if holiday and holiday.get("is_holiday"):
+        period = holiday.get("period_name") or holiday.get("holiday_name") or "Holiday period"
+        risks.append(f"{period} — historically elevated crash rates during holiday periods")
+    elif holiday and holiday.get("is_long_weekend"):
+        risks.append("Long weekend — elevated traffic volumes and crash risk")
+
     if not risks:
         risks.append("Conditions are favourable — standard risk levels apply")
 
@@ -348,3 +358,186 @@ def _weather_code_to_text(code):
         99: "Thunderstorm with heavy hail",
     }
     return codes.get(code, f"Unknown ({code})")
+
+
+# ---------------------------------------------------------------------------
+# NZ Holiday / Long Weekend Detection
+# ---------------------------------------------------------------------------
+
+def _easter_date(year):
+    """Compute Easter Sunday using the Anonymous Gregorian algorithm."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def get_nz_holidays(year):
+    """
+    Return a dict of NZ public holidays and official holiday periods for a given year.
+    Each entry maps a date to a dict with 'name' and 'period' (the CAS-style period name).
+    """
+    easter = _easter_date(year)
+
+    # Fixed-date holidays
+    holidays = {
+        date(year, 1, 1): {"name": "New Year's Day", "period": "Christmas New Year"},
+        date(year, 1, 2): {"name": "Day after New Year's", "period": "Christmas New Year"},
+        date(year, 2, 6): {"name": "Waitangi Day", "period": "Waitangi Day"},
+        date(year, 4, 25): {"name": "ANZAC Day", "period": "Easter/Anzac"},
+        date(year, 12, 25): {"name": "Christmas Day", "period": "Christmas New Year"},
+        date(year, 12, 26): {"name": "Boxing Day", "period": "Christmas New Year"},
+    }
+
+    # Mondayisation: if a fixed holiday falls on Sat/Sun, the following Mon (or Tue) is observed
+    for d, info in list(holidays.items()):
+        if d.weekday() == 5:  # Saturday
+            holidays[d + timedelta(days=2)] = {"name": info["name"] + " (observed)", "period": info["period"]}
+        elif d.weekday() == 6:  # Sunday
+            holidays[d + timedelta(days=1)] = {"name": info["name"] + " (observed)", "period": info["period"]}
+
+    # Easter (moveable)
+    holidays[easter + timedelta(days=-2)] = {"name": "Good Friday", "period": "Easter/Anzac"}
+    holidays[easter + timedelta(days=-1)] = {"name": "Easter Saturday", "period": "Easter/Anzac"}
+    holidays[easter] = {"name": "Easter Sunday", "period": "Easter/Anzac"}
+    holidays[easter + timedelta(days=1)] = {"name": "Easter Monday", "period": "Easter/Anzac"}
+
+    # King's Birthday — first Monday in June
+    jun1 = date(year, 6, 1)
+    kings_bday = jun1 + timedelta(days=(7 - jun1.weekday()) % 7)
+    holidays[kings_bday] = {"name": "King's Birthday", "period": "Queens Birthday"}
+
+    # Matariki — varies (gazetted dates)
+    matariki_dates = {
+        2024: date(2024, 6, 28), 2025: date(2025, 6, 20),
+        2026: date(2026, 7, 10), 2027: date(2027, 6, 25),
+        2028: date(2028, 7, 14), 2029: date(2029, 7, 6),
+        2030: date(2030, 6, 21),
+    }
+    if year in matariki_dates:
+        holidays[matariki_dates[year]] = {"name": "Matariki", "period": "Matariki"}
+
+    # Labour Day — fourth Monday in October
+    oct1 = date(year, 10, 1)
+    first_mon = oct1 + timedelta(days=(7 - oct1.weekday()) % 7)
+    labour = first_mon + timedelta(weeks=3)
+    holidays[labour] = {"name": "Labour Day", "period": "Labour Weekend"}
+
+    return holidays
+
+
+def get_nz_holiday_periods(year):
+    """
+    Return extended holiday PERIODS (not just single days) matching CAS convention.
+    These are the multi-day periods when crash rates are historically elevated.
+    """
+    easter = _easter_date(year)
+
+    periods = []
+
+    # Christmas/New Year: ~20 Dec to ~5 Jan
+    periods.append({
+        "name": "Christmas New Year",
+        "start": date(year, 12, 20),
+        "end": date(year + 1, 1, 5),
+    })
+    # Also catch the start of the year
+    if year > 2000:
+        periods.append({
+            "name": "Christmas New Year",
+            "start": date(year - 1, 12, 20),
+            "end": date(year, 1, 5),
+        })
+
+    # Easter/ANZAC: Good Friday -1 to Easter Monday +1, plus ANZAC
+    periods.append({
+        "name": "Easter/Anzac",
+        "start": easter + timedelta(days=-3),
+        "end": easter + timedelta(days=2),
+    })
+
+    # Queen's/King's Birthday weekend (Sat-Mon)
+    jun1 = date(year, 6, 1)
+    kings_bday = jun1 + timedelta(days=(7 - jun1.weekday()) % 7)
+    periods.append({
+        "name": "Queens Birthday",
+        "start": kings_bday + timedelta(days=-2),
+        "end": kings_bday + timedelta(days=1),
+    })
+
+    # Labour Weekend (Sat-Mon)
+    oct1 = date(year, 10, 1)
+    first_mon = oct1 + timedelta(days=(7 - oct1.weekday()) % 7)
+    labour = first_mon + timedelta(weeks=3)
+    periods.append({
+        "name": "Labour Weekend",
+        "start": labour + timedelta(days=-2),
+        "end": labour + timedelta(days=1),
+    })
+
+    return periods
+
+
+def get_current_holiday_info(dt=None):
+    """
+    Check if the given date falls within a NZ holiday period.
+    Returns dict with:
+        is_holiday (bool), holiday_name (str or None),
+        period_name (str or None), is_long_weekend (bool),
+        next_holiday (dict or None)
+    """
+    if dt is None:
+        dt = datetime.now(timezone(timedelta(hours=13)))  # NZDT
+    today = dt.date() if isinstance(dt, datetime) else dt
+
+    year = today.year
+    holidays = get_nz_holidays(year)
+    periods = get_nz_holiday_periods(year)
+
+    # Check if today is a public holiday
+    holiday_info = holidays.get(today)
+
+    # Check if today falls within a holiday period
+    current_period = None
+    for p in periods:
+        if p["start"] <= today <= p["end"]:
+            current_period = p["name"]
+            break
+
+    # Check for long weekend (Fri-Mon around a public holiday)
+    is_long_weekend = False
+    dow = today.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+    if dow in (4, 5, 6, 0):  # Fri-Mon
+        for d_offset in range(-1, 4):
+            check = today + timedelta(days=d_offset)
+            if check in holidays:
+                is_long_weekend = True
+                break
+
+    # Find next upcoming holiday
+    next_holiday = None
+    future_dates = sorted(d for d in holidays if d > today)
+    if future_dates:
+        nd = future_dates[0]
+        days_until = (nd - today).days
+        next_holiday = {
+            "name": holidays[nd]["name"],
+            "date": nd.isoformat(),
+            "days_until": days_until,
+        }
+
+    return {
+        "is_holiday": holiday_info is not None or current_period is not None,
+        "holiday_name": holiday_info["name"] if holiday_info else None,
+        "period_name": current_period,
+        "is_long_weekend": is_long_weekend,
+        "next_holiday": next_holiday,
+    }

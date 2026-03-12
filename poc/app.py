@@ -111,6 +111,19 @@ CONDITION_MULTIPLIERS = {
     "fine_day": (1 - rain_frac_crashes - dark_frac_crashes + raindark_frac) / ((1 - RAIN_EXPOSURE) * (1 - DARK_EXPOSURE)),
 }
 
+# Holiday multiplier — holiday periods have elevated crash rates
+# CAS holiday periods cover ~30 days/year across all periods
+# If X% of crashes happen during holidays but holidays only cover Y% of the year,
+# the holiday multiplier is X/Y
+HOLIDAY_EXPOSURE = 30 / 365  # ~8.2% of the year is a holiday period
+if "isHoliday" in train.columns:
+    holiday_frac_crashes = train["isHoliday"].mean()
+    CONDITION_MULTIPLIERS["holiday"] = holiday_frac_crashes / HOLIDAY_EXPOSURE if HOLIDAY_EXPOSURE > 0 else 1.0
+    CONDITION_MULTIPLIERS["non_holiday"] = (1 - holiday_frac_crashes) / (1 - HOLIDAY_EXPOSURE)
+else:
+    CONDITION_MULTIPLIERS["holiday"] = 1.0
+    CONDITION_MULTIPLIERS["non_holiday"] = 1.0
+
 print(f"  Condition multipliers:")
 for k, v in CONDITION_MULTIPLIERS.items():
     print(f"    {k}: {v:.2f}x")
@@ -253,6 +266,29 @@ for _, row in top_cells.iterrows():
     except Exception:
         pass
 
+# ---------------------------------------------------------------------------
+# AADT traffic volume data (loaded in background to not block startup)
+# ---------------------------------------------------------------------------
+_cell_aadt = {}  # h3_index -> {adt, pct_heavy, road_name, ...}
+_aadt_loaded = threading.Event()
+
+
+def _load_aadt_background():
+    """Fetch AADT data from NZTA and map to H3 cells."""
+    global _cell_aadt
+    try:
+        from poc.traffic import fetch_aadt_data, map_aadt_to_h3
+        aadt_data = fetch_aadt_data(min_adt=100)
+        _cell_aadt.update(map_aadt_to_h3(aadt_data))
+        print(f"AADT data loaded: {len(_cell_aadt)} cells with traffic volume data.", flush=True)
+    except Exception as e:
+        print(f"AADT load failed (non-fatal): {e}", flush=True)
+    finally:
+        _aadt_loaded.set()
+
+
+threading.Thread(target=_load_aadt_background, daemon=True).start()
+
 print(f"Ready. {len(top_cells)} cells, {len(MODEL_FEATURES)} features.")
 del df, train
 
@@ -260,16 +296,23 @@ del df, train
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def condition_multiplier(is_rain, is_dark):
+def condition_multiplier(is_rain, is_dark, is_holiday=False):
     """Get crash rate multiplier for current conditions."""
     if is_rain and is_dark:
-        return CONDITION_MULTIPLIERS["rain_dark"]
+        mult = CONDITION_MULTIPLIERS["rain_dark"]
     elif is_rain:
-        return CONDITION_MULTIPLIERS["rain"]
+        mult = CONDITION_MULTIPLIERS["rain"]
     elif is_dark:
-        return CONDITION_MULTIPLIERS["dark"]
+        mult = CONDITION_MULTIPLIERS["dark"]
     else:
-        return CONDITION_MULTIPLIERS["fine_day"]
+        mult = CONDITION_MULTIPLIERS["fine_day"]
+
+    # Apply holiday adjustment
+    if is_holiday:
+        mult *= CONDITION_MULTIPLIERS["holiday"]
+    else:
+        mult *= CONDITION_MULTIPLIERS["non_holiday"]
+    return mult
 
 
 def hours_to_human(hours):
@@ -685,6 +728,20 @@ def get_cells():
                 "mitigations": [{"action": m["action"], "reason": m["reason"]} for m in mits],
             },
         })
+
+        # Add AADT data if available
+        aadt_info = _cell_aadt.get(h3id)
+        if aadt_info:
+            props = features[-1]["properties"]
+            props["adt"] = aadt_info["adt"]
+            props["pct_heavy"] = round(aadt_info.get("pct_heavy", 0), 1)
+            from poc.traffic import compute_exposure_rate, classify_exposure_risk
+            crash_count = int(row.get("crash_count", 0))
+            years = int(row.get("cell_years", 1) or 1)
+            exp_rate = compute_exposure_rate(crash_count, years, aadt_info["adt"])
+            props["crash_rate_per_100m_vkm"] = exp_rate
+            props["exposure_risk"] = classify_exposure_risk(exp_rate)
+
     return jsonify({"type": "FeatureCollection", "features": features})
 
 
@@ -791,10 +848,22 @@ def score():
 
     severity_probs = lgb_model.predict(X, num_iteration=lgb_model.best_iteration)
 
+    # --- Holiday detection ---
+    is_holiday = False
+    holiday_info = None
+    if weather == "auto" or light == "auto":
+        try:
+            from poc.weather import get_current_holiday_info
+            holiday_info = get_current_holiday_info()
+            is_holiday = holiday_info.get("is_holiday", False)
+        except Exception:
+            pass
+
     # --- Frequency model: adjust hourly rate by condition multiplier ---
     mult = condition_multiplier(
         is_rain=is_rain or (weather == "any" and False),
         is_dark=is_dark or (light == "any" and False),
+        is_holiday=is_holiday,
     )
 
     result = {}
@@ -828,7 +897,7 @@ def score():
     for idx in top50_indices:
         row = top_cells.iloc[idx]
         mits = get_mitigations(row)
-        hotspots.append({
+        hs = {
             "h3": row["h3_index"],
             "etna_label": hours_to_human(etna_arr[idx]),
             "etna_hours": round(float(etna_arr[idx]), 1),
@@ -841,7 +910,12 @@ def score():
             "main_road": str(row.get("main_road", "") or ""),
             "risk_factors": get_risk_factors(row),
             "mitigations": [{"action": m["action"], "reason": m["reason"]} for m in mits],
-        })
+        }
+        aadt_info = _cell_aadt.get(row["h3_index"])
+        if aadt_info:
+            hs["adt"] = aadt_info["adt"]
+            hs["pct_heavy"] = round(aadt_info.get("pct_heavy", 0), 1)
+        hotspots.append(hs)
 
     stats = {
         "mean_dsi": round(float(np.mean(dsi_arr)) * 100, 1),
@@ -854,6 +928,8 @@ def score():
         "median_etna": hours_to_human(float(np.median(etna_arr))),
         "hotspots": hotspots,
     }
+    if holiday_info:
+        stats["holiday"] = holiday_info
 
     # Include live conditions in response if auto-detected
     if live_conditions:
@@ -874,14 +950,26 @@ def score():
 
 @app.route("/api/weather")
 def weather_endpoint():
-    """Return current NZ weather conditions + 24hr forecast."""
+    """Return current NZ weather conditions + 24hr forecast + holiday info."""
     try:
-        from poc.weather import get_current_conditions, get_risk_description
+        from poc.weather import get_current_conditions, get_risk_description, get_current_holiday_info
         conditions = get_current_conditions()
         conditions["risk_descriptions"] = get_risk_description(conditions)
+        conditions["holiday"] = get_current_holiday_info()
         return jsonify(conditions)
     except Exception as e:
         return jsonify({"error": str(e), "weather_description": "Unavailable"}), 500
+
+
+@app.route("/api/traffic")
+def traffic_endpoint():
+    """Return AADT traffic volume data mapped to H3 cells."""
+    if not _aadt_loaded.is_set():
+        return jsonify({"status": "loading", "message": "Traffic data is still loading..."}), 202
+    return jsonify({
+        "cells_with_adt": len(_cell_aadt),
+        "data": {h3id: info for h3id, info in _cell_aadt.items()},
+    })
 
 
 @app.route("/api/geocode")
