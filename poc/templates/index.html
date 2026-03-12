@@ -1385,12 +1385,21 @@ let routeLayer = null;
 let routeSegmentLayer = null;
 
 async function geocodePlace(query) {
-    const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ', New Zealand')}&format=json&limit=1`, {
-        headers: { 'User-Agent': 'SafeJourneys/1.0' }
-    });
-    const data = await resp.json();
-    if (!data.length) return null;
-    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), name: data[0].display_name.split(',')[0] };
+    try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query + ', New Zealand')}&format=json&limit=1`, {
+            headers: { 'User-Agent': 'SafeJourneys/1.0' }
+        });
+        if (!resp.ok) throw new Error(`Geocoding failed (${resp.status})`);
+        const data = await resp.json();
+        if (!data || !data.length) return null;
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        if (isNaN(lat) || isNaN(lng)) return null;
+        return { lat, lng, name: data[0].display_name.split(',')[0] };
+    } catch (e) {
+        console.error('Geocode error:', e);
+        return null;
+    }
 }
 
 async function calculateRoute() {
@@ -1511,13 +1520,28 @@ function clearRoute() {
 function renderRouteResults(data, originName, destName) {
     const results = document.getElementById('route-results');
 
-    // Risk score colour
+    // Risk score colour and probability band tooltip
     const score = data.risk_score || 1;
     let scoreColor = '#2ecc71';  // green
     let scoreLabel = 'Low Risk';
     if (score >= 8) { scoreColor = '#e74c3c'; scoreLabel = 'Very High Risk'; }
     else if (score >= 6) { scoreColor = '#e67e22'; scoreLabel = 'High Risk'; }
     else if (score >= 4) { scoreColor = '#f39c12'; scoreLabel = 'Moderate Risk'; }
+
+    const scoreBands = {
+        1: '< 1 in 500,000 trips',
+        2: '~1 in 100,000–500,000 trips',
+        3: '~1 in 50,000–100,000 trips',
+        4: '~1 in 10,000–50,000 trips',
+        5: '~1 in 5,000–10,000 trips',
+        6: '~1 in 1,000–5,000 trips',
+        7: '~1 in 500–1,000 trips',
+        8: '~1 in 100–500 trips',
+        9: '~1 in 50–100 trips',
+        10: '> 1 in 50 trips'
+    };
+    const scoreTooltip = `Score ${score}/10: ${data.route_crash_pct} chance per trip (${scoreBands[score] || ''})`;
+
 
     const dsiCls = data.route_dsi_pct >= 15 ? 'danger' : data.route_dsi_pct >= 8 ? 'warning' : 'safe';
 
@@ -1544,10 +1568,10 @@ function renderRouteResults(data, originName, destName) {
     }
 
     results.innerHTML = `
-        <div style="text-align:center;margin-top:8px;">
-            <div style="font-size:48px;font-weight:800;color:${scoreColor};line-height:1;">${score}</div>
+        <div style="text-align:center;margin-top:8px;cursor:help;" title="${scoreTooltip}">
+            <div style="font-size:48px;font-weight:800;color:${scoreColor};line-height:1;">${score}<span style="font-size:16px;font-weight:400;color:#888;">/10</span></div>
             <div style="font-size:11px;font-weight:600;color:${scoreColor};text-transform:uppercase;letter-spacing:1px;">${scoreLabel}</div>
-            <div style="font-size:10px;color:#888;margin-top:2px;">Risk Score (1-10 vs NZ average)</div>
+            <div style="font-size:10px;color:#888;margin-top:2px;">Per-trip crash probability: ${data.route_crash_pct}</div>
         </div>
 
         <div style="margin-top:10px;padding:8px 10px;background:rgba(255,255,255,0.05);border-radius:4px;">

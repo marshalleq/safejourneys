@@ -250,6 +250,11 @@ cell_profiles["base_dsi_prob"] = lgb_model.predict(
     X_base, num_iteration=lgb_model.best_iteration
 )
 
+# Compute baseline crash density from data (for route risk scoring)
+_cell_diameter_km = 0.6  # H3 resolution 8
+_baseline_crashes_per_km = (cell_profiles["hourly_rate"].fillna(0).mean() * 8760) / _cell_diameter_km
+print(f"Baseline crash density: {_baseline_crashes_per_km:.2f} crashes/km/year (from {len(cell_profiles)} cells)")
+
 # Top N cells by crash count
 TOP_N = 5000
 top_cells = cell_profiles.nlargest(TOP_N, "crash_count").copy().reset_index(drop=True)
@@ -1030,7 +1035,7 @@ def route_risk():
         return condition_multiplier(False, False, is_holiday)
 
     # Score the route
-    result = score_route(cells, cell_lookup, cell_mult_fn, aadt_data=_cell_aadt)
+    result = score_route(cells, cell_lookup, cell_mult_fn, aadt_data=_cell_aadt, baseline_crashes_per_km=_baseline_crashes_per_km)
     result["route_coordinates"] = route["coordinates"]
     result["distance_km"] = round(route["distance_m"] / 1000, 1)
     result["duration_min"] = round(route["duration_s"] / 60)

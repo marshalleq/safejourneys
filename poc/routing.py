@@ -95,7 +95,7 @@ def _estimate_adt(speed_limit, is_urban):
             return 5000   # rural state highway
 
 
-def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
+def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None, **kwargs):
     """
     Score a route by computing PER-VEHICLE crash probability across all cells.
 
@@ -116,7 +116,7 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
 
     Returns dict with route risk summary and per-segment details.
     """
-    CELL_DIAMETER_KM = 0.6  # H3 resolution 9
+    CELL_DIAMETER_KM = 0.46  # H3 resolution 8 (~460m edge-to-edge)
     if aadt_data is None:
         aadt_data = {}
 
@@ -210,18 +210,29 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
     # Express as "1 in N trips"
     one_in_n = round(1 / route_crash_prob) if route_crash_prob > 0 else 999999
 
-    # Risk score 1-10 based on crash density per km (scored cells only)
-    # NZ has ~30,000 injury crashes/year across ~94,000 km of road = 0.32/km/year
-    scored_km = max(cells_with_data, 1) * CELL_DIAMETER_KM
-    crashes_per_km_year = total_crashes_per_year / scored_km
-    NZ_BASELINE_CRASHES_PER_KM = 0.32
-    risk_ratio = crashes_per_km_year / NZ_BASELINE_CRASHES_PER_KM if NZ_BASELINE_CRASHES_PER_KM > 0 else 0
-    # Map ratio to 1-10: average (ratio=1) = 5, half = 3, double = 7, 4x = 9
-    import math as _math
-    if risk_ratio > 0:
-        risk_score = min(10, max(1, round(5 + 2.9 * _math.log2(max(risk_ratio, 0.1)))))
-    else:
+    # Risk score 1-10 based on per-trip crash probability
+    # Each score maps to a concrete probability band
+    # Score 1: < 1 in 500,000  |  Score 5: ~1 in 10,000  |  Score 10: > 1 in 50
+    if one_in_n >= 500000:
         risk_score = 1
+    elif one_in_n >= 100000:
+        risk_score = 2
+    elif one_in_n >= 50000:
+        risk_score = 3
+    elif one_in_n >= 10000:
+        risk_score = 4
+    elif one_in_n >= 5000:
+        risk_score = 5
+    elif one_in_n >= 1000:
+        risk_score = 6
+    elif one_in_n >= 500:
+        risk_score = 7
+    elif one_in_n >= 100:
+        risk_score = 8
+    elif one_in_n >= 50:
+        risk_score = 9
+    else:
+        risk_score = 10
 
     return {
         "route_crash_probability": round(route_crash_prob * 100, 6),
