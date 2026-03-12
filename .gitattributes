@@ -1,0 +1,2 @@
+*.parquet !text !filter !merge !diff
+*.pkl !text !filter !merge !diff
