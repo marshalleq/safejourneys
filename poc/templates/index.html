@@ -21,7 +21,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 .sidebar-header {
     padding: 16px 20px; background: #16213e;
     border-bottom: 2px solid #e74c3c;
+    display: flex; justify-content: space-between; align-items: center;
 }
+.sidebar-header .header-left { flex: 1; min-width: 0; }
+.sidebar-header .header-right { display: flex; gap: 6px; flex-shrink: 0; margin-left: 12px; }
 .sidebar-header h1 { font-size: 18px; color: #fff; margin-bottom: 4px; }
 .sidebar-header p { font-size: 12px; color: #999; }
 
@@ -378,8 +381,7 @@ body.light-mode .tt-divider { border-top-color: #ddd; }
 .about-btn {
     background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
     color: #ccc; font-size: 11px; padding: 4px 12px; border-radius: 12px;
-    cursor: pointer; transition: background 0.2s;
-    float: right; margin-top: -22px;
+    cursor: pointer; transition: background 0.2s; white-space: nowrap;
 }
 .about-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
 body.light-mode .about-btn {
@@ -423,15 +425,30 @@ body.light-mode .about-modal td { border-bottom-color: #eee; }
     padding: 10px 14px; border-radius: 4px; margin: 12px 0;
 }
 
+/* Data table modal extras */
+.data-table-wrap { max-height: 60vh; overflow-y: auto; }
+.data-table-wrap table { width: 100%; }
+.data-table-wrap th { position: sticky; top: 0; background: #1a1a2e; z-index: 1; }
+body.light-mode .data-table-wrap th { background: #fff; }
+.data-table-wrap td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table-wrap tr:hover td { background: rgba(255,255,255,0.05); }
+body.light-mode .data-table-wrap tr:hover td { background: rgba(0,0,0,0.03); }
+.data-table-wrap .total-row td { font-weight: 700; border-top: 2px solid #e74c3c; }
+
 </style>
 </head>
 <body>
 
 <div id="sidebar">
     <div class="sidebar-header">
-        <h1>Safe Journeys</h1>
-        <p>Interactive Risk Explorer v2 — Severity + Frequency Model</p>
-        <button class="about-btn" onclick="document.getElementById('about-overlay').classList.add('active')">About this site</button>
+        <div class="header-left">
+            <h1>Safe Journeys</h1>
+            <p>Interactive Risk Explorer v2 — Severity + Frequency Model</p>
+        </div>
+        <div class="header-right">
+            <button class="about-btn" onclick="openDataTable()">Data</button>
+            <button class="about-btn" onclick="document.getElementById('about-overlay').classList.add('active')">About</button>
+        </div>
     </div>
 
     <div class="controls">
@@ -725,6 +742,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         map.closePopup();
         document.getElementById('about-overlay').classList.remove('active');
+        document.getElementById('data-overlay').classList.remove('active');
     }
 });
 
@@ -937,6 +955,7 @@ function buildHotspotMarkers(hotspotList) {
                     }
                 });
             }
+            fetchLocationWeather(h.lat, h.lng);
         });
 
         hotspotMarkerLayer.addLayer(marker);
@@ -1066,6 +1085,7 @@ fetch('/api/cells')
                             }
                         });
                     }
+                    fetchLocationWeather(p.lat, p.lng);
                 });
             },
         }).addTo(map);
@@ -1279,7 +1299,8 @@ function updateWeatherBanner(liveWeather) {
     const lightIcon = liveWeather.light === 'dark' ? '&#9790;' : liveWeather.light === 'twilight' ? '&#9788;' : '&#9728;';
     const tempStr = liveWeather.temp_c != null ? ` | ${liveWeather.temp_c}°C` : '';
     const windStr = liveWeather.wind_kmh != null ? ` | Wind ${liveWeather.wind_kmh}km/h` : '';
-    statusEl.innerHTML = `<span class="weather-icon">${lightIcon}</span>${liveWeather.weather_description}${tempStr}${windStr}`;
+    const regionStr = liveWeather.weather_region ? `<strong>${liveWeather.weather_region}</strong>: ` : '';
+    statusEl.innerHTML = `<span class="weather-icon">${lightIcon}</span>${regionStr}${liveWeather.weather_description}${tempStr}${windStr}`;
 
     // Holiday info
     const holiday = liveWeather.holiday;
@@ -1328,8 +1349,86 @@ function renderForecastStrip(forecast) {
     });
 }
 
+// ---------------------------------------------------------------
+// Data table modal
+// ---------------------------------------------------------------
+let _yearlyDataCache = null;
+
+function openDataTable() {
+    document.getElementById('data-overlay').classList.add('active');
+    if (_yearlyDataCache) {
+        renderYearlyTable(_yearlyDataCache);
+        return;
+    }
+    fetch('/api/stats/yearly')
+        .then(r => r.json())
+        .then(data => {
+            _yearlyDataCache = data;
+            renderYearlyTable(data);
+        })
+        .catch(() => {
+            document.getElementById('yearly-table-wrap').innerHTML = '<p style="color:#e74c3c;">Failed to load data.</p>';
+        });
+}
+
+function renderYearlyTable(data) {
+    const wrap = document.getElementById('yearly-table-wrap');
+    if (!data || !data.length) {
+        wrap.innerHTML = '<p style="color:#888;">No data available.</p>';
+        return;
+    }
+
+    // Compute totals
+    let totCrashes = 0, totFatal = 0, totSerious = 0, totMinor = 0;
+    data.forEach(r => { totCrashes += r.total; totFatal += r.fatal; totSerious += r.serious; totMinor += r.minor; });
+
+    // Render newest first
+    const rows = [...data].reverse();
+
+    let html = `<table>
+        <thead><tr>
+            <th>Year</th><th style="text-align:right">Crashes</th>
+            <th style="text-align:right">Fatal</th><th style="text-align:right">Serious</th>
+            <th style="text-align:right">Minor</th>
+        </tr></thead><tbody>`;
+
+    // Total row at top
+    html += `<tr class="total-row">
+        <td><strong>Total</strong></td>
+        <td class="num"><strong>${totCrashes.toLocaleString()}</strong></td>
+        <td class="num"><strong>${totFatal.toLocaleString()}</strong></td>
+        <td class="num"><strong>${totSerious.toLocaleString()}</strong></td>
+        <td class="num"><strong>${totMinor.toLocaleString()}</strong></td>
+    </tr>`;
+
+    rows.forEach(r => {
+        html += `<tr>
+            <td>${r.year}</td>
+            <td class="num">${r.total.toLocaleString()}</td>
+            <td class="num">${r.fatal.toLocaleString()}</td>
+            <td class="num">${r.serious.toLocaleString()}</td>
+            <td class="num">${r.minor.toLocaleString()}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+}
+
 function fetchWeatherBanner() {
     fetch('/api/weather')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.error) {
+                updateWeatherBanner(data);
+                renderForecastStrip(data.forecast);
+            }
+        })
+        .catch(() => {});
+}
+
+function fetchLocationWeather(lat, lng) {
+    fetch(`/api/weather?lat=${lat}&lng=${lng}`)
         .then(r => r.json())
         .then(data => {
             if (!data.error) {
@@ -1362,6 +1461,18 @@ setInterval(() => {
     document.getElementById(id).addEventListener('change', onControlChange);
 });
 </script>
+
+<!-- Data table modal -->
+<div class="about-overlay" id="data-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+<div class="about-modal" style="max-width:600px;">
+    <button class="about-close" onclick="document.getElementById('data-overlay').classList.remove('active')">&times;</button>
+    <h2>Crash Records by Year</h2>
+    <p style="font-size:12px;color:#888;margin-bottom:12px;">Source: NZTA Crash Analysis System (CAS). Updated every 4 hours.</p>
+    <div class="data-table-wrap" id="yearly-table-wrap">
+        <p style="color:#888;">Loading...</p>
+    </div>
+</div>
+</div>
 
 <!-- About modal -->
 <div class="about-overlay" id="about-overlay" onclick="if(event.target===this)this.classList.remove('active')">

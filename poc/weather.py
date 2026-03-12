@@ -22,7 +22,6 @@ _cache_lock = threading.Lock()
 CACHE_TTL = 600  # 10 minutes
 
 # Representative points across NZ for weather sampling
-# We don't need per-cell weather — NZ is small enough that ~8 points cover it
 NZ_WEATHER_POINTS = {
     "auckland":    (-36.85, 174.76),
     "hamilton":    (-37.79, 175.28),
@@ -33,6 +32,122 @@ NZ_WEATHER_POINTS = {
     "napier":      (-39.49, 176.92),
     "nelson":      (-41.27, 173.28),
 }
+
+
+def nearest_weather_point(lat, lng):
+    """Find the nearest weather sampling point to a given lat/lng. Returns (name, (lat, lng))."""
+    best_name = None
+    best_dist = float("inf")
+    for name, (plat, plng) in NZ_WEATHER_POINTS.items():
+        dist = math.sqrt((lat - plat) ** 2 + (lng - plng) ** 2)
+        if dist < best_dist:
+            best_dist = dist
+            best_name = name
+    return best_name, NZ_WEATHER_POINTS[best_name]
+
+
+def get_conditions_for_location(lat, lng):
+    """
+    Get weather conditions for a specific lat/lng using the nearest sampling point.
+    Returns dict with conditions + which region was used.
+    """
+    region_name, (rlat, rlng) = nearest_weather_point(lat, lng)
+    weather_data = fetch_nz_weather()
+    light = get_light_condition(lat, lng)
+
+    if weather_data is None or region_name not in weather_data:
+        return {
+            "is_rain": False,
+            "is_dark": light == "dark",
+            "light": light,
+            "rain_mm": 0,
+            "temp_c": None,
+            "wind_kmh": None,
+            "wind_gust_kmh": None,
+            "visibility_m": None,
+            "weather_description": "Weather data unavailable",
+            "weather_code": None,
+            "weather_region": region_name.title(),
+            "forecast": [],
+        }
+
+    data = weather_data[region_name]
+    current = data.get("current", {})
+    rain = current.get("precipitation", 0) or 0
+    temp = current.get("temperature_2m", 15)
+    wind = current.get("wind_speed_10m", 0) or 0
+    gust = current.get("wind_gusts_10m", 0) or 0
+    code = current.get("weather_code", 0) or 0
+
+    # Build forecast from this region's data
+    hourly = data.get("hourly", {})
+    forecast = []
+    times = hourly.get("time", [])
+    for i, t in enumerate(times):
+        forecast.append({
+            "time": t,
+            "rain_mm": (hourly.get("precipitation", []) or [])[i] if i < len(hourly.get("precipitation", [])) else 0,
+            "rain_prob": (hourly.get("precipitation_probability", []) or [])[i] if i < len(hourly.get("precipitation_probability", [])) else 0,
+            "temp_c": (hourly.get("temperature_2m", []) or [])[i] if i < len(hourly.get("temperature_2m", [])) else None,
+            "wind_kmh": (hourly.get("wind_speed_10m", []) or [])[i] if i < len(hourly.get("wind_speed_10m", [])) else 0,
+            "visibility_m": (hourly.get("visibility", []) or [])[i] if i < len(hourly.get("visibility", [])) else None,
+            "weather_code": (hourly.get("weather_code", []) or [])[i] if i < len(hourly.get("weather_code", [])) else 0,
+        })
+
+    min_visibility = 999999
+    if forecast:
+        min_visibility = min((f.get("visibility_m") or 999999) for f in forecast[:3])
+
+    is_rain = rain > 0.1 or code in (51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99)
+
+    return {
+        "is_rain": is_rain,
+        "is_dark": light == "dark",
+        "light": light,
+        "rain_mm": round(rain, 1),
+        "temp_c": round(temp, 1),
+        "wind_kmh": round(wind, 1),
+        "wind_gust_kmh": round(gust, 1),
+        "visibility_m": round(min_visibility),
+        "weather_code": code,
+        "weather_description": _weather_code_to_text(code),
+        "weather_region": region_name.title(),
+        "ice_risk": temp <= 3,
+        "high_wind": gust >= 70,
+        "poor_visibility": min_visibility < 1000,
+        "forecast": forecast,
+    }
+
+
+def get_conditions_per_region():
+    """
+    Get weather conditions keyed by region name, for per-cell scoring.
+    Returns dict: region_name -> {is_rain, is_dark, light, ...}
+    """
+    weather_data = fetch_nz_weather()
+    if weather_data is None:
+        return {}
+
+    result = {}
+    for region_name in NZ_WEATHER_POINTS:
+        if region_name not in weather_data:
+            continue
+        data = weather_data[region_name]
+        current = data.get("current", {})
+        rlat, rlng = NZ_WEATHER_POINTS[region_name]
+        light = get_light_condition(rlat, rlng)
+        rain = current.get("precipitation", 0) or 0
+        code = current.get("weather_code", 0) or 0
+        is_rain = rain > 0.1 or code in (51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99)
+
+        result[region_name] = {
+            "is_rain": is_rain,
+            "is_dark": light == "dark",
+            "light": light,
+            "rain_mm": rain,
+        }
+
+    return result
 
 
 def _sun_altitude(lat, lng, dt=None):

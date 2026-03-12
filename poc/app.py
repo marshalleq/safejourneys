@@ -859,18 +859,50 @@ def score():
         except Exception:
             pass
 
-    # --- Frequency model: adjust hourly rate by condition multiplier ---
-    mult = condition_multiplier(
+    # --- Frequency model: per-cell condition multiplier ---
+    use_per_cell_weather = (weather == "auto" or light == "auto")
+    region_conditions = {}
+    if use_per_cell_weather:
+        try:
+            from poc.weather import get_conditions_per_region, nearest_weather_point
+            region_conditions = get_conditions_per_region()
+        except Exception:
+            region_conditions = {}
+
+    # Fallback single multiplier (used when not auto, or if per-cell fails)
+    fallback_mult = condition_multiplier(
         is_rain=is_rain or (weather == "any" and False),
         is_dark=is_dark or (light == "any" and False),
         is_holiday=is_holiday,
     )
 
+    def cell_multiplier(lat, lng):
+        """Get per-cell condition multiplier based on nearest weather station."""
+        if not use_per_cell_weather or not region_conditions:
+            return fallback_mult
+        try:
+            region_name, _ = nearest_weather_point(lat, lng)
+            rc = region_conditions.get(region_name)
+            if rc is None:
+                return fallback_mult
+            cell_rain = rc["is_rain"] if weather == "auto" else is_rain
+            cell_dark = rc["is_dark"] if light == "auto" else is_dark
+            return condition_multiplier(cell_rain, cell_dark, is_holiday)
+        except Exception:
+            return fallback_mult
+
     result = {}
+    cell_mults = []
     for i, (_, row) in enumerate(top_cells.iterrows()):
         h3id = row["h3_index"]
         if h3id not in cell_boundaries:
+            cell_mults.append(fallback_mult)
             continue
+
+        lat = row.get("cell_lat", 0) or 0
+        lng = row.get("cell_lng", 0) or 0
+        mult = cell_multiplier(lat, lng)
+        cell_mults.append(mult)
 
         base_hourly = row.get("hourly_rate", 0) or 0
         adj_hourly = base_hourly * mult
@@ -886,8 +918,9 @@ def score():
     # Stats
     dsi_arr = severity_probs
     etna_arr = []
-    for _, row in top_cells.iterrows():
-        hr = (row.get("hourly_rate", 0) or 0) * mult
+    for i, (_, row) in enumerate(top_cells.iterrows()):
+        m = cell_mults[i] if i < len(cell_mults) else fallback_mult
+        hr = (row.get("hourly_rate", 0) or 0) * m
         etna_arr.append((1 / hr) if hr > 0 else 999999)
     etna_arr = np.array(etna_arr)
 
@@ -923,7 +956,7 @@ def score():
         "high_risk_count": int((dsi_arr >= 0.15).sum()),
         "elevated_count": int(((dsi_arr >= 0.08) & (dsi_arr < 0.15)).sum()),
         "cells_scored": len(dsi_arr),
-        "condition_multiplier": round(mult, 2),
+        "condition_multiplier": round(float(np.median(cell_mults)), 2),
         "shortest_etna": hours_to_human(float(np.min(etna_arr))),
         "median_etna": hours_to_human(float(np.median(etna_arr))),
         "hotspots": hotspots,
@@ -950,10 +983,17 @@ def score():
 
 @app.route("/api/weather")
 def weather_endpoint():
-    """Return current NZ weather conditions + 24hr forecast + holiday info."""
+    """Return current weather conditions + 24hr forecast + holiday info.
+    Optional: ?lat=...&lng=... for location-specific weather.
+    """
     try:
-        from poc.weather import get_current_conditions, get_risk_description, get_current_holiday_info
-        conditions = get_current_conditions()
+        from poc.weather import get_current_conditions, get_conditions_for_location, get_risk_description, get_current_holiday_info
+        lat = request.args.get("lat", type=float)
+        lng = request.args.get("lng", type=float)
+        if lat is not None and lng is not None:
+            conditions = get_conditions_for_location(lat, lng)
+        else:
+            conditions = get_current_conditions()
         conditions["risk_descriptions"] = get_risk_description(conditions)
         conditions["holiday"] = get_current_holiday_info()
         return jsonify(conditions)
@@ -970,6 +1010,30 @@ def traffic_endpoint():
         "cells_with_adt": len(_cell_aadt),
         "data": {h3id: info for h3id, info in _cell_aadt.items()},
     })
+
+
+@app.route("/api/stats/yearly")
+def yearly_stats():
+    """Return crash counts by year, with severity breakdown."""
+    if USE_DB:
+        from sqlalchemy import text
+        with _db_engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT "crashYear" AS year,
+                       COUNT(*) AS total,
+                       SUM("fatalCount") AS fatal,
+                       SUM("seriousInjuryCount") AS serious,
+                       SUM("minorInjuryCount") AS minor
+                FROM crash_records
+                GROUP BY "crashYear"
+                ORDER BY "crashYear"
+            """)).fetchall()
+        data = [{"year": r[0], "total": r[1], "fatal": int(r[2] or 0),
+                 "serious": int(r[3] or 0), "minor": int(r[4] or 0)} for r in rows]
+    else:
+        # Fallback for parquet mode — use top_cells parent df isn't available
+        data = []
+    return jsonify(data)
 
 
 @app.route("/api/geocode")
