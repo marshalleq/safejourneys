@@ -130,6 +130,7 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
     hotspot_cells = 0  # cells with ETNA < 7 days
     highest_risk_segment = None
     highest_risk_prob = 0
+    highest_risk_etna_days = None
 
     for h3id, lat, lng in route_cells:
         cell = cell_data.get(h3id)
@@ -200,6 +201,7 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
         if crash_prob > highest_risk_prob:
             highest_risk_prob = crash_prob
             highest_risk_segment = seg
+            highest_risk_etna_days = (1 / hourly_rate / 24) if hourly_rate > 0 else None
 
     # Overall route probability (single trip)
     route_crash_prob = 1 - total_no_crash_prob
@@ -208,15 +210,18 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
     # Express as "1 in N trips"
     one_in_n = round(1 / route_crash_prob) if route_crash_prob > 0 else 999999
 
-    # Risk score 1-10 based on crash density per km
-    # Baseline: NZ average ~0.75 injury crashes per km per year on state highways
-    route_km = len(route_cells) * CELL_DIAMETER_KM
-    crashes_per_km_year = (total_crashes_per_year / route_km) if route_km > 0 else 0
-    NZ_BASELINE_CRASHES_PER_KM = 0.75  # approximate NZ state highway average
+    # Risk score 1-10 based on crash density per km (scored cells only)
+    # NZ has ~30,000 injury crashes/year across ~94,000 km of road = 0.32/km/year
+    scored_km = max(cells_with_data, 1) * CELL_DIAMETER_KM
+    crashes_per_km_year = total_crashes_per_year / scored_km
+    NZ_BASELINE_CRASHES_PER_KM = 0.32
     risk_ratio = crashes_per_km_year / NZ_BASELINE_CRASHES_PER_KM if NZ_BASELINE_CRASHES_PER_KM > 0 else 0
-    # Map ratio to 1-10 scale: 0.5x baseline = 1, 1x = 3, 2x = 5, 4x = 7, 8x+ = 10
+    # Map ratio to 1-10: average (ratio=1) = 5, half = 3, double = 7, 4x = 9
     import math as _math
-    risk_score = min(10, max(1, round(1 + 3 * _math.log2(max(risk_ratio, 0.25)))))
+    if risk_ratio > 0:
+        risk_score = min(10, max(1, round(5 + 2.9 * _math.log2(max(risk_ratio, 0.1)))))
+    else:
+        risk_score = 1
 
     return {
         "route_crash_probability": round(route_crash_prob * 100, 6),
@@ -230,6 +235,7 @@ def score_route(route_cells, cell_data, cell_multiplier_fn, aadt_data=None):
         "cells_with_data": cells_with_data,
         "cells_without_data": cells_without_data,
         "total_time_hours": round(total_time_hours, 2),
+        "worst_etna_days": round(highest_risk_etna_days, 1) if highest_risk_etna_days else None,
         "highest_risk_segment": highest_risk_segment,
         "segments": segments,
     }

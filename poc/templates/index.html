@@ -1531,9 +1531,17 @@ function renderRouteResults(data, originName, destName) {
     const annualTrips = tripsPerWeekDefault * 2 * 52; // return trips, 52 weeks
     const annualRisk = (1 - Math.pow(1 - singleTripProb, annualTrips)) * 100;
 
-    const hsInfo = data.highest_risk_segment
-        ? `<div style="font-size:11px;color:#ccc;margin-top:6px;">Highest risk cell: ${data.highest_risk_segment.lat}, ${data.highest_risk_segment.lng} (${data.highest_risk_segment.dsi_pct}% DSI, ${data.highest_risk_segment.speed_limit}km/h)</div>`
-        : '';
+    let hsInfo = '';
+    if (data.highest_risk_segment) {
+        const etnaStr = data.worst_etna_days
+            ? (data.worst_etna_days < 1
+                ? `crash every ${Math.round(data.worst_etna_days * 24)}hrs`
+                : `crash every ${data.worst_etna_days} days`)
+            : '';
+        hsInfo = `<div style="font-size:11px;padding:6px 10px;margin-top:8px;background:rgba(231,76,60,0.1);border-radius:4px;border-left:2px solid #e74c3c;">
+            <strong>Worst segment:</strong> ${etnaStr}${etnaStr ? ' | ' : ''}${data.highest_risk_segment.dsi_pct}% DSI | ${data.highest_risk_segment.speed_limit}km/h
+        </div>`;
+    }
 
     results.innerHTML = `
         <div style="text-align:center;margin-top:8px;">

@@ -1003,9 +1003,10 @@ def route_risk():
     # Map route to H3 cells
     cells = route_to_h3_cells(route["coordinates"])
 
-    # Build cell data lookup from top_cells
+    # Build cell data lookup from ALL cell_profiles (not just top_cells)
+    # Routes pass through many cells that may not be in the top 5000
     cell_lookup = {}
-    for _, row in top_cells.iterrows():
+    for _, row in cell_profiles.iterrows():
         cell_lookup[row["h3_index"]] = row.to_dict()
 
     # Per-cell weather multiplier
