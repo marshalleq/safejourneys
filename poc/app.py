@@ -1001,7 +1001,7 @@ def route_risk():
         return jsonify(route), 400
 
     # Map route to H3 cells
-    cells = route_to_h3_cells(route["coordinates"])
+    cells = route_to_h3_cells(route["coordinates"], resolution=8)
 
     # Build cell data lookup from ALL cell_profiles (not just top_cells)
     # Routes pass through many cells that may not be in the top 5000

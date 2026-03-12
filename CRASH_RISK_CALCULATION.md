@@ -2,7 +2,7 @@
 
 ## Overview
 
-The route risk calculator estimates the probability that **you, as an individual driver**, will be involved in a crash on a specific route under current conditions. It combines historical crash frequency data, real-time weather/holiday adjustments, and traffic volume data to produce a per-vehicle risk estimate.
+The route risk calculator estimates the probability that **you, as an individual driver**, will be involved in a crash on a specific route under current conditions. It combines historical crash frequency data, real-time weather/holiday adjustments, and traffic volume data to produce a per-vehicle risk estimate alongside route-level danger metrics.
 
 ---
 
@@ -17,6 +17,8 @@ A common mistake in crash risk modelling is conflating "a crash will happen here
 - If 1 crash occurs among 16,000 vehicles, **my** risk per transit is **1 in 16,000**
 
 The cell-level crash rate tells us how dangerous the **location** is. To get individual risk, we must divide by the number of vehicles sharing that risk.
+
+However, per-vehicle probability alone is always small (driving is statistically safe on any single trip). To make the tool useful for route comparison, we also compute **route-level danger metrics**: total crashes/year, hotspot count, risk score, and annualised commuter risk.
 
 ---
 
@@ -35,7 +37,7 @@ A typical urban route of 10 km passes through ~20–30 cells. Auckland to Wellin
 
 ### Step 2: Per-Cell Data Lookup
 
-For each H3 cell on the route, we look up:
+For each H3 cell on the route, we look up crash data from the **full cell_profiles dataset** — all cells with any crash history, not just the top 5,000 shown on the map. This is critical: the map displays the top 5,000 cells by crash count for performance, but route scoring must search all cells to avoid treating most of the route as "no data."
 
 | Field | Source | Description |
 |-------|--------|-------------|
@@ -45,6 +47,8 @@ For each H3 cell on the route, we look up:
 | `cell_pct_urban` | CAS crash records | Proportion of crashes in urban setting |
 
 Cells with no historical crash data are assigned zero risk (no data = no known hazard).
+
+**Bug fix note (2026-03-13):** An earlier version built the route lookup from `top_cells` (top 5,000 by crash count). This caused most route cells to show no data, producing 0 crashes/year and artificially low risk scores even through high-risk corridors. Fixed by using the full `cell_profiles` dataset.
 
 ### Step 3: Condition Multiplier
 
@@ -109,7 +113,19 @@ Intuitively, you might think spending more time in a cell means more risk. But t
 
 The transit time affects both exposure and the number of vehicles sharing that exposure equally, so it cancels.
 
-### Step 6: Route Aggregation
+**Bug fix note (2026-03-13):** An earlier version multiplied by `hours_in_cell` (~0.012 hours for a 50km/h zone), which incorrectly reduced per-vehicle risk by ~80x. The transit time cancels out mathematically and should not appear in the formula.
+
+### Step 6: Route-Level Danger Metrics
+
+In addition to per-vehicle probability, we compute metrics that describe how dangerous the **route itself** is:
+
+**Crashes per year (all vehicles):** Sum of `hourly_rate × 8760` across all scored cells. This answers "how many crashes happen on these roads per year?" — independent of whether you personally are involved.
+
+**Hotspot cells:** Count of cells where ETNA < 7 days (a crash occurs at least once per week). These are the most dangerous stretches on the route.
+
+**Worst segment ETNA:** The ETNA of the single most dangerous cell on the route, expressed in days or hours. e.g., "crash every 3 days" — the most visceral indicator of route danger.
+
+### Step 7: Route Aggregation
 
 Individual cell probabilities are combined using the complement method:
 
@@ -124,15 +140,48 @@ The result is expressed as:
 - **Percentage**: e.g., "0.042%"
 - **1 in N trips**: e.g., "1 in 2,380 trips"
 
-### Step 7: Severity Assessment
+### Step 8: Risk Score (1–10)
 
-If a crash does occur, what's the severity? The route DSI (Death or Serious Injury) percentage is the crash-probability-weighted average of per-cell DSI scores:
+A normalised score comparing the route's crash density against the NZ national average. The density is calculated using **only cells with crash data** (scored cells), not the total cells on the route — this prevents dilution from cells that simply lack crash history.
+
+```
+scored_km = cells_with_data × 0.6 km
+crashes_per_km_year = total_crashes_per_year / scored_km
+risk_ratio = crashes_per_km_year / NZ_baseline
+risk_score = 5 + 2.9 × log₂(risk_ratio)    # clamped to 1–10
+```
+
+The NZ baseline is ~0.32 injury crashes per km of road per year (~30,000 crashes across ~94,000 km of road network).
+
+| Score | Meaning | Crash density vs NZ average |
+|-------|---------|--------------------------|
+| 1–2 | Low risk | Well below average |
+| 3–4 | Below average | ~0.5× average |
+| 5 | Average | NZ national average |
+| 6–7 | Above average | 2–4× average |
+| 8–9 | High risk | 4–8× average |
+| 10 | Extreme | 8×+ average |
+
+**Bug fix note (2026-03-13):** The original formula placed NZ average at score 1 (the bottom of the scale), meaning even dangerous routes appeared "low risk." Recentered so average = 5, and changed the denominator from all route cells to scored cells only, preventing dilution from cells without crash history.
+
+### Step 9: Severity and Commuter Risk
+
+**DSI (Death or Serious Injury):** The crash-probability-weighted average of per-cell DSI scores:
 
 ```
 Route DSI = Σ(dsi_prob_i × crash_prob_i) / Σ(crash_prob_i) × 100
 ```
 
-Higher-risk cells contribute more to the severity estimate, which makes sense — if a crash is most likely in a high-speed rural cell, the severity profile should reflect that.
+Higher-risk cells contribute more to the severity estimate.
+
+**Annual commuter risk:** The UI provides a frequency selector (2, 3, 5, 7, or 10 times per week). Annual risk is computed assuming return trips:
+
+```
+annual_trips = trips_per_week × 2 × 52
+annual_risk = 1 - (1 - single_trip_prob) ^ annual_trips
+```
+
+This transforms a tiny per-trip probability into a meaningful annual figure. A 0.004% per-trip risk becomes ~2% per year for a daily commuter — a number worth paying attention to.
 
 ---
 
@@ -153,6 +202,10 @@ Aggregated across ~90 cells: **~0.04% crash probability (1 in ~2,500 trips)**
 
 With rain: multiply hourly rates by ~1.4 → **~0.06% (1 in ~1,700 trips)**
 
+If driven 5x/week as a commute: **~17% annual risk** of being involved in a crash on this route.
+
+Route-level metrics: ~35 crashes/year on these roads, 4 hotspot cells, worst segment ETNA ~12 days.
+
 ---
 
 ## Sanity Check Against National Statistics
@@ -168,38 +221,40 @@ A 125 km trip should have roughly `125 / 1,300,000 ≈ 0.01%` baseline crash pro
 
 ## What the UI Displays
 
-The route results show multiple layers of information designed to be actionable:
+The route results panel shows three layers of information:
 
 ### Risk Score (1–10)
 
-A normalised score comparing the route's crash density (crashes per km per year) against the NZ state highway average (~0.75 crashes/km/year). The scale uses a logarithmic mapping:
-
-| Score | Meaning | Crash density vs baseline |
-|-------|---------|--------------------------|
-| 1–2 | Low risk | Below average |
-| 3–4 | Moderate | Around average |
-| 5–6 | High | 2–4× average |
-| 7–8 | Very high | 4–8× average |
-| 9–10 | Extreme | 8×+ average |
-
-This gives instant visual differentiation: a quiet rural route scores 2, a route through Auckland's worst corridors scores 7–8.
+Large, colour-coded number at the top. Green (1–3), amber (4–6), orange (7–8), red (9–10). Provides instant visual differentiation between routes.
 
 ### Crashes on This Route
 
 - **Crashes/year (all vehicles)**: Total crashes per year across all roads on the route. This is the raw danger of the route — "42 crashes/year happen on these roads."
 - **Hotspot cells**: Number of cells where a crash occurs at least once per week (ETNA < 7 days). These are the stretches that drive the risk.
+- **Worst segment**: ETNA of the most dangerous cell, plus its DSI and speed limit.
 
 ### Your Risk
 
 - **Single trip**: Per-vehicle probability for one trip (the actuarial number).
-- **If driven N times/week**: Adjustable frequency selector (2, 3, 5, 7, 10 times/week). Computes annual risk assuming return trips: `annual_risk = 1 - (1 - single_trip_prob) ^ (trips_per_week × 2 × 52)`. A daily commuter on a risky route can see meaningful annual risk percentages.
+- **If driven N times/week**: Adjustable frequency selector (2, 3, 5, 7, 10 times/week). Computes annual risk assuming return trips.
 - **DSI if crash**: Probability of death or serious injury, should a crash occur.
+
+---
+
+## Bug History
+
+| Date | Issue | Impact | Fix |
+|------|-------|--------|-----|
+| 2026-03-13 | Route lookup used `top_cells` (top 5,000) instead of full `cell_profiles` | Most route cells had no data → 0 crashes, 0 risk | Changed to search all `cell_profiles` |
+| 2026-03-13 | Per-vehicle formula multiplied by `hours_in_cell` | Risk ~80× too low | Removed — transit time cancels out mathematically |
+| 2026-03-13 | Risk score scale placed NZ average at score 1 | All routes showed "Low Risk" | Recentered: NZ average = score 5, baseline corrected to 0.32/km/year |
+| 2026-03-13 | Risk score denominator used all cells (including no-data) | Crash density diluted by empty cells | Changed to scored cells only |
 
 ---
 
 ## Limitations and Assumptions
 
-1. **Uniform traffic distribution**: ADT is divided by 24 to get vehicles/hour. Real traffic peaks at rush hour (2-3× average) and drops overnight (0.1× average). This means risk is underestimated during quiet periods and overestimated during peak.
+1. **Uniform traffic distribution**: ADT is divided by 24 to get vehicles/hour. Real traffic peaks at rush hour (2–3× average) and drops overnight (0.1× average). This means risk is underestimated during quiet periods and overestimated during peak.
 
 2. **No time-of-day crash patterns**: The CAS API doesn't provide hour-of-day data, so crash rates are uniform across 24 hours. In reality, crashes cluster at certain times.
 
