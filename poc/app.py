@@ -255,6 +255,10 @@ _cell_diameter_km = 0.6  # H3 resolution 8
 _baseline_crashes_per_km = (cell_profiles["hourly_rate"].fillna(0).mean() * 8760) / _cell_diameter_km
 print(f"Baseline crash density: {_baseline_crashes_per_km:.2f} crashes/km/year (from {len(cell_profiles)} cells)")
 
+# Pre-build cell lookup for route scoring (all cells, indexed by h3)
+print(f"Building route cell lookup for {len(cell_profiles)} cells...")
+_all_cell_lookup = {row["h3_index"]: row.to_dict() for _, row in cell_profiles.iterrows()}
+
 # Top N cells by crash count
 TOP_N = 5000
 top_cells = cell_profiles.nlargest(TOP_N, "crash_count").copy().reset_index(drop=True)
@@ -1008,12 +1012,6 @@ def route_risk():
     # Map route to H3 cells
     cells = route_to_h3_cells(route["coordinates"], resolution=8)
 
-    # Build cell data lookup from ALL cell_profiles (not just top_cells)
-    # Routes pass through many cells that may not be in the top 5000
-    cell_lookup = {}
-    for _, row in cell_profiles.iterrows():
-        cell_lookup[row["h3_index"]] = row.to_dict()
-
     # Per-cell weather multiplier
     is_holiday = False
     try:
@@ -1035,7 +1033,7 @@ def route_risk():
         return condition_multiplier(False, False, is_holiday)
 
     # Score the route
-    result = score_route(cells, cell_lookup, cell_mult_fn, aadt_data=_cell_aadt, baseline_crashes_per_km=_baseline_crashes_per_km)
+    result = score_route(cells, _all_cell_lookup, cell_mult_fn, aadt_data=_cell_aadt)
     result["route_coordinates"] = route["coordinates"]
     result["distance_km"] = round(route["distance_m"] / 1000, 1)
     result["duration_min"] = round(route["duration_s"] / 60)

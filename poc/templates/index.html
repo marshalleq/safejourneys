@@ -1425,15 +1425,39 @@ async function calculateRoute() {
         results.innerHTML = `<div style="color:#888;">Computing route from ${origin.name} to ${dest.name}...</div>`;
 
         // Call route API
-        const resp = await fetch('/api/route', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                origin_lat: origin.lat, origin_lng: origin.lng,
-                dest_lat: dest.lat, dest_lng: dest.lng,
-            }),
-        });
-        const data = await resp.json();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 60000);
+        let resp;
+        try {
+            resp = await fetch('/api/route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    origin_lat: origin.lat, origin_lng: origin.lng,
+                    dest_lat: dest.lat, dest_lng: dest.lng,
+                }),
+                signal: controller.signal,
+            });
+        } catch (fetchErr) {
+            clearTimeout(timeout);
+            results.innerHTML = `<div style="color:#e74c3c;">Route request failed: ${fetchErr.name === 'AbortError' ? 'timed out (try a shorter route)' : fetchErr.message}</div>`;
+            return;
+        }
+        clearTimeout(timeout);
+
+        if (!resp.ok) {
+            const errText = await resp.text().catch(() => 'Unknown error');
+            results.innerHTML = `<div style="color:#e74c3c;">Server error (${resp.status}): ${errText}</div>`;
+            return;
+        }
+
+        let data;
+        try {
+            data = await resp.json();
+        } catch (parseErr) {
+            results.innerHTML = `<div style="color:#e74c3c;">Failed to parse response from server</div>`;
+            return;
+        }
 
         if (data.error) {
             results.innerHTML = `<div style="color:#e74c3c;">${data.error}</div>`;

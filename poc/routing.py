@@ -22,7 +22,7 @@ def get_route(origin_lng, origin_lat, dest_lng, dest_lat):
         "steps": "false",
     }
     try:
-        resp = requests.get(url, params=params, timeout=15)
+        resp = requests.get(url, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
